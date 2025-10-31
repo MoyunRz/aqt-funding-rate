@@ -1,4 +1,5 @@
-from gate_api import Configuration, FuturesApi, ApiClient, FuturesOrder, MarginApi, SpotApi, Order
+from gate_api import Configuration, FuturesApi, ApiClient, FuturesOrder, MarginApi, SpotApi, Order, UnifiedApi, \
+    UnifiedLeverageSetting
 
 host = 'https://api.gateio.ws'
 
@@ -12,6 +13,8 @@ margin_api = MarginApi(ApiClient(config))
 
 spot_api = SpotApi(ApiClient(config))
 
+unified_api = UnifiedApi(ApiClient(config))
+
 futures_api = FuturesApi(ApiClient(config))
 
 settle="usdt"
@@ -19,7 +22,7 @@ def get_cex_contracts():
    return futures_api.list_futures_contracts("usdt")
 
 
-def get_cex_futures_place(contract:str, price:str, size:int):
+def cex_futures_place(contract:str, price:str, size:int):
 
     tif = 'gtc'
     if price == '0' or price == '' :
@@ -30,7 +33,7 @@ def get_cex_futures_place(contract:str, price:str, size:int):
     order = FuturesOrder(contract=contract, size=size, price=price, tif=tif,iceberg=0)
     return futures_api.create_futures_order(settle, order)
 
-def get_cex_spot_place(currency_pair:str, side:str,price:str, amount:str,tp="market"):
+def cex_spot_place(currency_pair:str, side:str,price:str, amount:str,tp="market"):
     """
     现货下单
     """
@@ -52,7 +55,6 @@ def get_cex_spot_place(currency_pair:str, side:str,price:str, amount:str,tp="mar
         auto_repay=True,
         iceberg="0"
     )
-
     return spot_api.create_order(order)
 
 def get_cex_close(contract:str,auto_size:str, price="0"):
@@ -67,6 +69,22 @@ def get_cex_close(contract:str,auto_size:str, price="0"):
 
     order = FuturesOrder(contract=contract, size=0, price=price,auto_size=auto_size,reduce_only=True,close=True, tif=tif)
     return futures_api.create_futures_order(settle, order)
+
+def get_cex_unified_leverage(contract:str):
+   """
+   获取用户最大、最小可设置币种杠杆倍数
+   """
+   return unified_api.get_user_leverage_currency_config_with_http_info(contract)
+
+def set_cex_unified_leverage(currency:str,leverage: str):
+   """
+   获取用户最大、最小可设置币种杠杆倍数
+   """
+   lever_setting = UnifiedLeverageSetting(
+       currency=currency,
+       leverage=leverage
+   )
+   return unified_api.set_user_leverage_currency_setting_with_http_info(lever_setting)
 
 def set_cex_leverage(contract:str, leverage:str):
    return futures_api.update_position_leverage(settle, contract,leverage)

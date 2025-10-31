@@ -59,14 +59,41 @@ def get_history_funding():
                 if funding_rate > 0:
                     # 如果是正数费率需要做空
                     print("做空")
-                    mock_open_order(v.name,funding_rate, mpx, -1000, kline)
+                    mock_open_order(v.name,funding_rate, mpx, -1000)
                 else:
                     # 如果是负数费率需要做多
                     print("做多")
-                    mock_open_order(v.name,funding_rate, mpx, 1000, kline)
+                    mock_open_order(v.name,funding_rate, mpx, 1000)
+def open_order(name:str, funding_rate:float, mpx:float, size:int):
+    """
+    开仓: 现货杠杆 + 合约
+    :param funding_rate:
+    :param name: 合约名字
+    :param mpx: 价格
+    :param size: 数量
+    :return: none
+    """
+    # 先获取现货的最高杠杆倍数
+    # 切割
+    name_list = name.split("_")
+    resp = rest.get_cex_unified_leverage(name_list[0])
+    # 最高杠杆倍数
+    max_leverage = resp.max_leverage
+    # 设置现货借贷币种杠杆倍数
+    rest.set_cex_unified_leverage(name_list[0],max_leverage)
+    # 设置合约杠杆倍数
+    rest.set_cex_leverage(name,max_leverage)
+    # 对该币种下单
+    if size > 0:
+        # 现货做空
+        rest.cex_spot_place(name,"sell",str(mpx),str(size))
+        rest.cex_futures_place(name,"0",size)
+    else:
+        # 现货做多
+        rest.cex_spot_place(name, "buy", str(mpx), str(size))
+        rest.cex_futures_place(name, "0", size)
 
-
-def mock_open_order(name:str,funding_rate:float,px:float,size:int,kline):
+def mock_open_order(name:str,funding_rate:float,px:float,size:int):
     """
     模拟开仓
     :param funding_rate:
