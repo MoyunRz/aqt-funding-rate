@@ -1,4 +1,4 @@
-from gate_api import Configuration, FuturesApi, ApiClient, FuturesOrder
+from gate_api import Configuration, FuturesApi, ApiClient, FuturesOrder, MarginApi, SpotApi, Order
 
 host = 'https://api.gateio.ws'
 
@@ -8,13 +8,18 @@ config = Configuration(
     host="https://api.gateio.ws/api/v4"
 )
 
+margin_api = MarginApi(ApiClient(config))
+
+spot_api = SpotApi(ApiClient(config))
+
 futures_api = FuturesApi(ApiClient(config))
+
 settle="usdt"
 def get_cex_contracts():
    return futures_api.list_futures_contracts("usdt")
 
 
-def get_cex_place(contract:str, price:str, size:int):
+def get_cex_futures_place(contract:str, price:str, size:int):
 
     tif = 'gtc'
     if price == '0' or price == '' :
@@ -24,6 +29,31 @@ def get_cex_place(contract:str, price:str, size:int):
 
     order = FuturesOrder(contract=contract, size=size, price=price, tif=tif,iceberg=0)
     return futures_api.create_futures_order(settle, order)
+
+def get_cex_spot_place(currency_pair:str, side:str,price:str, amount:str,tp="market"):
+    """
+    现货下单
+    """
+    tif = 'gtc'
+    if price == '0' or price == '' :
+        tif = 'ioc'
+    else:
+        tif = 'gtc'
+
+    order = Order(
+        currency_pair=currency_pair,
+        amount=amount,
+        side=side,
+        price=price,
+        time_in_force=tif,
+        type=tp,
+        account="margin",
+        auto_borrow=True,
+        auto_repay=True,
+        iceberg="0"
+    )
+
+    return spot_api.create_order(order)
 
 def get_cex_close(contract:str,auto_size:str, price="0"):
 
