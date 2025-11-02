@@ -213,7 +213,7 @@ def mock_open_order(name:str,funding_rate:float,fpx:float,spx:float,size:int):
             list_futures_ps[name] = ps1
 
             svol = (sprice * (-ps2.size) + spx * size)
-            ps2.entry_price = svol / (ps2.size + size)
+            ps2.entry_price = svol / (-ps2.size + size)
             ps2.size = ps2.size - size
             ps2.realised_pnl = float(ps2.realised_pnl) - svol * fee
             list_spot_ps[name] = ps2
