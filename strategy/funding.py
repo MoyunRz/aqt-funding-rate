@@ -85,7 +85,7 @@ def get_history_funding():
 
     for v in r:
         funding_rate = float(v.funding_rate) * 100.0
-        if funding_rate > 0.3 or funding_rate < -0.3:
+        if funding_rate > 0.5 or funding_rate < -0.5:
             print(v.name,"资金费率(%):",funding_rate)
             # 判断现在是不是快到了下次费率结算时间点
             # 获取当前的时间戳
