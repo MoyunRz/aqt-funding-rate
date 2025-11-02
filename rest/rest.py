@@ -19,7 +19,10 @@ futures_api = FuturesApi(ApiClient(config))
 
 settle="usdt"
 def get_cex_contracts():
-   return futures_api.list_futures_contracts("usdt")
+    try:
+        return futures_api.list_futures_contracts("usdt")
+    except:
+        pass
 
 
 def cex_futures_place(contract:str, price:str, size:int):
@@ -100,7 +103,16 @@ def get_cex_position(contract:str):
 def get_cex_all_position():
     return futures_api.list_positions_with_http_info(settle)
 
-def get_cex_candle(contract:str,interval="5m",limit=100):
-    return futures_api.list_futures_candlesticks(settle,contract,interval=interval,limit=limit)
+def get_cex_futures_candle(contract:str, interval="5m", limit=100):
+    try:
+        return futures_api.list_futures_candlesticks(settle,contract,interval=interval,limit=limit)
+    except:
+        pass
+
+def get_cex_spot_candle(contract:str, interval="5m", limit=100):
+    try:
+        return spot_api.list_candlesticks(contract,interval=interval,limit=limit)
+    except:
+        pass
 
 
