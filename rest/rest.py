@@ -115,4 +115,14 @@ def get_cex_spot_candle(contract:str, interval="5m", limit=100):
     except:
         pass
 
+def get_cex_fticker(contract:str):
+    try:
+        return futures_api.list_futures_tickers(settle,contract=contract)
+    except:
+        pass
 
+def get_cex_sticker(contract:str):
+    try:
+        return spot_api.list_tickers(currency_pair=contract)
+    except:
+        pass

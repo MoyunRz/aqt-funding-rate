@@ -94,21 +94,30 @@ def get_history_funding():
             if (current_timestamp%v.funding_interval <10) or env ==1:
                 # print("快到了 查询k线数据")
                 # 查询k线数据
-                fkline = rest.get_cex_futures_candle(v.name, "1m", 1)
-                if fkline is None:
-                    continue
-                skline = rest.get_cex_spot_candle(v.name, "1m", 1)
-                if skline is None or len(skline) ==0:
+
+                # 替换为 ticker
+
+                fticker = rest.get_cex_fticker(v.name)
+                if fticker is None or len(fticker) ==0:
                     time.sleep(1)
                     continue
-                fpx = float(fkline[0].c)
-                spx = float(skline[0][2])
+                sticker = rest.get_cex_sticker(v.name)
+                if sticker is None or len(sticker) ==0:
+                    time.sleep(1)
+                    continue
+                # 最新卖方最低价
+                f_lowest_ask = fticker[0].lowest_ask
+                # 最新买方最高价
+                f_highest_bid = fticker[0].highest_bid
+
+                s_lowest_ask = sticker[0].lowest_ask
+                s_highest_bid = sticker[0].highest_bid
                 if funding_rate > 0:
                     # 如果是正数费率需要做空
-                    mock_open_order(v.name,funding_rate, fpx ,spx, -3000)
+                    mock_open_order(v.name,funding_rate, float(f_highest_bid) ,float(s_lowest_ask), -3000)
                 else:
                     # 如果是负数费率需要做多
-                    mock_open_order(v.name,funding_rate, fpx ,spx, 3000)
+                    mock_open_order(v.name,funding_rate, float(f_lowest_ask) ,float(s_highest_bid), 3000)
 
 def open_order(name:str, funding_rate:float, mpx:float, size:int):
     """
