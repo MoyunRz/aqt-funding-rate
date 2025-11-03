@@ -11,13 +11,20 @@ def mock_all_futures_position():
     global list_futures_ps
 
     for i, key in enumerate(list_futures_ps):
-        kline = rest.get_cex_futures_candle(key, "1m", 3)
-        if kline is None:
+        fticker = rest.get_cex_fticker(key)
+        if fticker is None or len(fticker) == 0:
+            time.sleep(1)
             continue
+        # 最新卖方最低价
+        f_lowest_ask = float(fticker[0].lowest_ask)
+        # 最新买方最高价
+        f_highest_bid = float(fticker[0].highest_bid)
         # 根据市场价格计算收益率
         # 计算浮动收益
         ps = list_futures_ps.get(key)
-        mpx = float(kline[0].c)
+        mpx = f_lowest_ask
+        if ps.size > 0:
+            mpx = f_highest_bid
         entry_price = float(ps.entry_price)
         ps.unrealised_pnl = str((mpx - entry_price) * ps.size)
         list_futures_ps[key] = ps
@@ -26,13 +33,21 @@ def mock_all_futures_position():
 def mock_all_spot_position():
     global list_spot_ps
     for i, key in enumerate(list_spot_ps):
-        kline = rest.get_cex_spot_candle(key, "1m", 3)
-        if kline is None:
-            continue
         # 根据市场价格计算收益率
         # 计算浮动收益
         ps = list_spot_ps.get(key)
-        mpx = float(kline[0][2])
+        sticker = rest.get_cex_sticker(key)
+        if sticker is None or len(sticker) == 0:
+            time.sleep(1)
+            continue
+        s_lowest_ask = float(sticker[0].lowest_ask)
+        s_highest_bid = float(sticker[0].highest_bid)
+        # 假设做空，平仓需要看卖盘
+        mpx = s_lowest_ask
+        if ps.size > 0:
+            # 我要卖出，需要看买盘
+            mpx = s_highest_bid
+        print(key,"现在的价格",mpx)
         entry_price = float(ps.entry_price)
         ps.unrealised_pnl = str((mpx-entry_price) * ps.size)
         list_spot_ps[key] = ps
@@ -43,7 +58,6 @@ def mock_watch_position():
     global list_spot_ps
     key_list = []
     fps = mock_all_futures_position()
-
     sps = mock_all_spot_position()
 
     for key in fps:
@@ -85,17 +99,13 @@ def get_history_funding():
 
     for v in r:
         funding_rate = float(v.funding_rate) * 100.0
-        if funding_rate > 1 or funding_rate  < -1:
+        if funding_rate > 0.6 or funding_rate  < -0.6:
             print(v.name,"资金费率(%):",funding_rate)
             # 判断现在是不是快到了下次费率结算时间点
             # 获取当前的时间戳
             current_timestamp = int(time.time())
             # print(f"当前时间戳: {current_timestamp}")
             if (current_timestamp%v.funding_interval <10) or env ==1:
-                # print("快到了 查询k线数据")
-                # 查询k线数据
-
-                # 替换为 ticker
 
                 fticker = rest.get_cex_fticker(v.name)
                 if fticker is None or len(fticker) ==0:
@@ -113,10 +123,14 @@ def get_history_funding():
                 s_lowest_ask = sticker[0].lowest_ask
                 s_highest_bid = sticker[0].highest_bid
                 if funding_rate > 0:
-                    # 如果是正数费率需要做空
+                    # 如果是正数费
+                    # 合约需要做空 看买盘
+                    # 现货需要做多 看卖盘
                     mock_open_order(v.name,funding_rate, float(f_highest_bid) ,float(s_lowest_ask), -3000)
                 else:
-                    # 如果是负数费率需要做多
+                    # 如果是负数费率
+                    # 合约需要做多 看卖盘
+                    # 现货需要做空 看买盘
                     mock_open_order(v.name,funding_rate, float(f_lowest_ask) ,float(s_highest_bid), 3000)
 
 def open_order(name:str, funding_rate:float, mpx:float, size:int):
@@ -153,9 +167,9 @@ def mock_open_order(name:str,funding_rate:float,fpx:float,spx:float,size:int):
     模拟开仓
     :param funding_rate:
     :param name: 合约名字
-    :param px: 价格
+    :param fpx: 合约价格
+    :param spx: 现货价格
     :param size: 数量
-    :param kline: K线数据
     :return: none
     """
 
@@ -176,7 +190,7 @@ def mock_open_order(name:str,funding_rate:float,fpx:float,spx:float,size:int):
     sps = Position(
         contract=name,
         entry_price=str(spx),
-        size=size,
+        size=-size,
         leverage="10",
         realised_pnl= "0", # 实现收益
     )
@@ -205,6 +219,7 @@ def mock_open_order(name:str,funding_rate:float,fpx:float,spx:float,size:int):
 
         if ps1.contract == fps.contract and ps1.size > 0 and size > 0:
 
+            #----------------- 合约 --------------------
             fvol = (fprice * ps1.size + fpx * size)
             ps1.entry_price = fvol / (ps1.size + size)
             # 做空
@@ -212,38 +227,35 @@ def mock_open_order(name:str,funding_rate:float,fpx:float,spx:float,size:int):
             ps1.realised_pnl = float(ps1.realised_pnl) + (funding_rate-fee) * fvol
             list_futures_ps[name] = ps1
 
+            # ----------------- 现货 --------------------
             svol = (sprice * (-ps2.size) + spx * size)
             ps2.entry_price = svol / (-ps2.size + size)
             ps2.size = ps2.size - size
             ps2.realised_pnl = float(ps2.realised_pnl) - svol * fee
             list_spot_ps[name] = ps2
-
             isHave = True
 
     if not isHave:
-
         ffee = fpx * size * fee
         sfee = spx * size * fee
-
         realised_pnl = fpx * size * funding_rate
         fps.realised_pnl = str(realised_pnl)
         if size < 0:
             # 正数收益
             fps.realised_pnl = str(-realised_pnl + ffee)
             sps.realised_pnl = str(sfee)
-            # 现货做多
-            sps.size = -size
+
         if size > 0:
             # 正数收益
             fps.realised_pnl = str(realised_pnl - ffee)
             sps.realised_pnl = str(-sfee)
-            # 现货做空
-            sps.size = -size
+
         print("----------------------------------------- 开仓 -----------------------------------------------")
         print(fps.contract,"合约价格:",fpx,"合约数量:",fps.size,"合约手续费:",ffee,"合约实现收益:",fps.realised_pnl)
         print(fps.contract,"现货价格:",spx,"合约数量:",sps.size,"现货手续费:",sfee,"现货实现收益:",sps.realised_pnl)
         print("预计套利收益:",float(fps.realised_pnl) + float(sps.realised_pnl))
         print("---------------------------------------------------------------------------------------------")
+
         list_futures_ps[name] = fps
         list_spot_ps[name] = sps
 
