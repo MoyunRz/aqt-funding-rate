@@ -271,8 +271,8 @@ def run_funding():
     # 循环判断最高资金费率的合约
     while True:
         get_history_funding()
+        time.sleep(5)
         mock_watch_position()
-
         time.sleep(1)
 
 
