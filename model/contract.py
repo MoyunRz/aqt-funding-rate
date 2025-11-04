@@ -9,7 +9,7 @@ from ccxt.static_dependencies.marshmallow.fields import Boolean
 @dataclass
 class Contract:
     """
-    期货合约信息数据结构体
+    合约信息数据结构体
     """
     name: str
     type: str

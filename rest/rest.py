@@ -7,12 +7,13 @@ logger = logging.getLogger(__name__)
 from gate_api import Configuration, FuturesApi, ApiClient, FuturesOrder, MarginApi, SpotApi, Order, UnifiedApi, \
     UnifiedLeverageSetting, WalletApi, MarginMarketLeverage
 
-host = 'https://api.gateio.ws'
+# host = 'https://api.gateio.ws'
+host = "https://api-testnet.gateapi.io/api/v4"
 
 config = Configuration(
     key='18c9b6413645f921935f00b0cd405e6e',
     secret='e7d12abf7a8f9240224c57f09ad3f48d1baec366b219054a60331282a8edafc4',
-    host="https://api-testnet.gateapi.io/api/v4"
+    host=host
 )
 
 
@@ -43,7 +44,7 @@ def cex_futures_close_position(contract: str):
         order = FuturesOrder(contract=contract, close=True, size=0, iceberg=0)
         return futures_api.create_futures_order(settle, order)
     except Exception as e:
-        logger.error(f"期货平仓失败 contract={contract}, error={e}")
+        logger.error(f"合约平仓失败 contract={contract}, error={e}")
         return None
 
 def cex_futures_place(contract: str, price: str, size: int):
@@ -57,52 +58,58 @@ def cex_futures_place(contract: str, price: str, size: int):
         order = FuturesOrder(contract=contract, size=size, price=price, tif=tif, iceberg=0)
         return futures_api.create_futures_order(settle, order)
     except Exception as e:
-        logger.error(f"期货下单失败 contract={contract}, price={price}, size={size}, error={e}")
+        logger.error(f"合约下单失败 contract={contract}, price={price}, size={size}, error={e}")
         return None
 
-def cex_spot_place(currency_pair: str, side: str, price: str, amount: str, tp="limit"):
+def cex_spot_place(currency_pair: str, side: str,  amount: str,price="0"):
     """
     现货下单
+    根据 Gate.io API v4 文档: https://www.gate.com/docs/developers/apiv4/zh_CN/#%E4%B8%8B%E5%8D%95
     :param currency_pair: 交易对，如 BTC_USDT
     :param side: 买卖方向 buy/sell
-    :param price: 价格，市价单传 "0" 或 ""
+    :param price: 价格，市价单传 "0" 或 "" 或不传
     :param amount: 数量
-    :param tp: 订单类型 limit/market，默认 limit
     """
     try:
         # 判断是市价单还是限价单
-        is_market_order = (price == '0' or price == '')
+        is_market_order = (price == '0' or price == '' or price == 0)
         
         if is_market_order:
             # 市价单配置
+            # 根据 Gate.io API 文档，市价单不需要 price 和 time_in_force 参数
+            # margin 账户的市价单不支持 auto_borrow 和 auto_repay 参数
             order = Order(
                 currency_pair=currency_pair,
-                amount=amount,
-                side=side,
                 type="market",
-                account="margin",
+                time_in_force='ioc',
+                side=side,
+                amount=amount,
+                account="unified",
                 auto_borrow=True,
-                auto_repay=True,
+                auto_repay=True
             )
         else:
             # 限价单配置
+            # 根据 Gate.io API 文档，限价单需要 price 参数
+            # margin 账户支持 auto_borrow 和 auto_repay
             order = Order(
                 currency_pair=currency_pair,
-                amount=amount,
-                side=side,
-                price=price,
-                time_in_force='gtc',
                 type="limit",
-                account="margin",
+                side=side,
+                amount=amount,
+                price=str(price),
+                time_in_force='gtc',
+                account="unified",
                 auto_borrow=True,
-                auto_repay=True,
-                iceberg="0"
+                auto_repay=True
             )
         
         return spot_api.create_order(order)
     except GateApiException as e:
         logger.error(f"现货下单失败 currency_pair={currency_pair}, side={side}, price={price}, amount={amount}, error={e}")
         logger.error(f"详细错误: {e.label}: {e.message}")
+        if hasattr(e, 'body') and e.body:
+            logger.error(f"响应体: {e.body}")
         return None
     except Exception as e:
         logger.error(f"现货下单异常 currency_pair={currency_pair}, side={side}, price={price}, amount={amount}, error={e}")
@@ -212,7 +219,7 @@ def get_cex_futures_candle(contract: str, interval="5m", limit=100):
     try:
         return futures_api.list_futures_candlesticks(settle, contract, interval=interval, limit=limit)
     except Exception as e:
-        logger.error(f"获取期货K线失败 contract={contract}, interval={interval}, limit={limit}, error={e}")
+        logger.error(f"获取合约K线失败 contract={contract}, interval={interval}, limit={limit}, error={e}")
         return None
 
 def get_cex_spot_candle(contract: str, interval="5m", limit=100):
@@ -226,12 +233,12 @@ def get_cex_fticker(contract: str):
     try:
         return futures_api.list_futures_tickers(settle, contract=contract)
     except Exception as e:
-        logger.error(f"获取期货行情失败 contract={contract}, error={e}")
+        logger.error(f"获取合约行情失败 contract={contract}, error={e}")
         return None
 
 def get_cex_sticker(contract: str):
     try:
         return spot_api.list_tickers(currency_pair=contract)
-    except Exception as e:
+    except GateApiException as e:
         logger.error(f"获取现货行情失败 contract={contract}, error={e}")
         return None
