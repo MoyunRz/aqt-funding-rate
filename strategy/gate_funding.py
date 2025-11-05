@@ -90,20 +90,27 @@ def open_order(name: str, size: float, csz: int):
     :param size: 数量
     :return: none
     """
+    # 如果有持仓就跳过
+    psList = rest.get_cex_position(name)
+    if psList is not None and psList.size!=0:
+        logger.warning(f"{name} 已经有持仓")
+        return
+
     # 先获取现货的最高杠杆倍数
     # 切割
     name_list = name.split("_")
-    resp = rest.get_cex_unified_leverage(name_list[0])
-    # 最高杠杆倍数
-    if resp is None or len(resp) < 2:
-        logger.warning(f"无法获取 {name_list[0]} 的统一杠杆配置")
-        return
+
+    # resp = rest.get_cex_unified_leverage(name_list[0])
+    # # 最高杠杆倍数
+    # if resp is None or len(resp) < 2:
+    #     logger.warning(f"无法获取 {name_list[0]} 的统一杠杆配置")
+    #     return
         
-    max_leverage = resp[0].max_leverage
+    # max_leverage = resp[0].max_leverage
     # 设置现货借贷币种杠杆倍数
-    rest.set_cex_unified_leverage(name_list[0], max_leverage)
+    rest.set_cex_unified_leverage(name_list[0], lever)
     # 设置合约杠杆倍数
-    rest.set_cex_leverage(name, max_leverage)
+    rest.set_cex_leverage(name, lever)
     # 对该币种下单
     if csz > 0:
         # 合约做多
@@ -114,11 +121,11 @@ def open_order(name: str, size: float, csz: int):
 
         if res.id != "":
             res1 = rest.cex_spot_place(name, "sell", str(size))
-
             if res1 is None or res1 == "":
                 logger.error("合约开空失败")
                 rest.cex_futures_close_position(name)
                 return
+            time.sleep(15)
     else:
         # 合约做空
         res = rest.cex_futures_place(name, "0", csz)
@@ -132,6 +139,7 @@ def open_order(name: str, size: float, csz: int):
                 logger.error("现货开多失败")
                 rest.cex_futures_close_position(name)
                 return
+            time.sleep(15)
 
 def watch_position():
     fps = rest.get_cex_all_position()
@@ -173,7 +181,7 @@ def watch_position():
                 spnl = -(float(sticker[0].highest_bid) - price) * amount + fee
             if spot_order_list[0].side == "buy" and v.size < 0:
                 # 做多  lowest_ask 现在的买出价
-                sz = (amount / price)
+                sz = float(amount / price)
                 spnl = fee + (float(sticker[0].lowest_ask) - price) * sz
 
         side = "long"
@@ -189,9 +197,9 @@ def watch_position():
             logger.info(f"平仓交易对：{v.contract} 总收益：{pnl + spnl}")
             rest.cex_futures_close_position(v.contract)
             if side == "long":
-                rest.cex_spot_place(v.contract, "buy", "0", str(amount))
+                rest.cex_spot_place(v.contract, "buy", str(amount))
             if side == "short":
-                rest.cex_spot_place(v.contract, "sell", "0", str(amount))
+                rest.cex_spot_place(v.contract, "sell", str(amount))
 
 def run_funding():
     try:
@@ -200,7 +208,7 @@ def run_funding():
         while True:
             watch_history_funding()
             watch_position()
-            time.sleep(3)
+            time.sleep(1)
     except KeyboardInterrupt:
         logger.info("程序被用户中断")
     except Exception as e:
