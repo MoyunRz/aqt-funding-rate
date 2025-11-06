@@ -22,15 +22,14 @@ def watch_history_funding():
     for v in r:
         funding_rate = float(v.funding_rate) * 100.0
 
-        if v.name == "SOL_USDT":
+        if funding_rate > 0.1 or funding_rate < -0.1:
 
             logger.info(f"{v.name} 资金费率(%): {funding_rate}")
             # 判断现在是不是快到了下次费率结算时间点
             # 获取当前的时间戳
             current_timestamp = int(time.time())
             # print(f"当前时间戳: {current_timestamp}")
-            # if current_timestamp % v.funding_interval > (v.funding_interval-10):
-            if True:
+            if current_timestamp % v.funding_interval > (v.funding_interval-10):
                 fticker = rest.get_cex_fticker(v.name)
                 if fticker is None or len(fticker) == 0:
                     logger.warning(f"无法获取 {v.name} 的合约行情数据")
@@ -105,8 +104,8 @@ def open_order(name: str, size: float, csz: int):
     # if resp is None or len(resp) < 2:
     #     logger.warning(f"无法获取 {name_list[0]} 的统一杠杆配置")
     #     return
-        
     # max_leverage = resp[0].max_leverage
+
     # 设置现货借贷币种杠杆倍数
     rest.set_cex_unified_leverage(name_list[0], lever)
     # 设置合约杠杆倍数
@@ -125,12 +124,12 @@ def open_order(name: str, size: float, csz: int):
                 logger.error("合约开空失败")
                 rest.cex_futures_close_position(name)
                 return
-            time.sleep(15)
+            time.sleep(30)
     else:
         # 合约做空
         res = rest.cex_futures_place(name, "0", csz)
         if res is None:
-            logger.error(f"现货下单失败: {name}")
+            logger.error(f"合约下单失败: {name}")
             return
 
         if res.id != "":
@@ -139,7 +138,7 @@ def open_order(name: str, size: float, csz: int):
                 logger.error("现货开多失败")
                 rest.cex_futures_close_position(name)
                 return
-            time.sleep(15)
+            time.sleep(30)
 
 def watch_position():
     fps = rest.get_cex_all_position()
@@ -163,17 +162,18 @@ def watch_position():
         fee = float(spot_order_list[0].fee) * 3
         spnl = fee
         amount = float(spot_order_list[0].amount)
+        sticker = rest.get_cex_sticker(v.contract)
+        if sticker is None or len(sticker) == 0:
+            logger.warning(f"无法获取 {v.contract} 的现货行情")
+            time.sleep(1)
+            continue
+
         if spot_order_list[0].status != "closed":
             logger.warning(f"请手动处理 {v.contract} 仓位，订单状态未关闭")
             continue
         sz = 0.0
         if spot_order_list[0].status == "closed":
             # 计算收益
-            sticker = rest.get_cex_sticker(v.contract)
-            if sticker is None or len(sticker) == 0:
-                logger.warning(f"无法获取 {v.contract} 的现货行情")
-                time.sleep(1)
-                continue
             price = float(spot_order_list[0].avg_deal_price)
             if spot_order_list[0].side == "sell" and v.size > 0:
                 # 做空 highest_bid 现在的买价
@@ -193,11 +193,11 @@ def watch_position():
         logger.info(f"现货方向：{spot_order_list[0].side} 持仓数量：{sz} 持仓收益：{spnl}")
         logger.info(f"预计总收益：{pnl + spnl}")
         
-        if pnl > 0:
+        if pnl + spnl > 0:
             logger.info(f"平仓交易对：{v.contract} 总收益：{pnl + spnl}")
             rest.cex_futures_close_position(v.contract)
             if side == "long":
-                rest.cex_spot_place(v.contract, "buy", str(amount))
+                rest.cex_spot_place(v.contract, "buy", str(float(sticker[0].lowest_ask)*sz))
             if side == "short":
                 rest.cex_spot_place(v.contract, "sell", str(amount))
 

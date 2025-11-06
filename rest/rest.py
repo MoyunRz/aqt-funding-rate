@@ -41,7 +41,7 @@ def get_cex_wallet_balance():
 
 def cex_futures_close_position(contract: str):
     try:
-        order = FuturesOrder(contract=contract, close=True, size=0, iceberg=0)
+        order = FuturesOrder(contract=contract, size=0, price="0", close=True,tif='ioc')
         return futures_api.create_futures_order(settle, order)
     except Exception as e:
         logger.error(f"合约平仓失败 contract={contract}, error={e}")
@@ -115,7 +115,7 @@ def cex_spot_place(currency_pair: str, side: str,  amount: str,price="0"):
         logger.error(f"现货下单异常 currency_pair={currency_pair}, side={side}, price={price}, amount={amount}, error={e}")
         return None
 
-def get_cex_close(contract: str, auto_size: str, price="0"):
+def cex_close_position(contract: str, auto_size: str, price="0"):
     try:
         # close boolean 设置为 true 的时候执行平仓操作，并且size应设置为0
         tif = 'gtc'
@@ -125,8 +125,7 @@ def get_cex_close(contract: str, auto_size: str, price="0"):
         else:
             tif = 'gtc'
 
-        order = FuturesOrder(contract=contract, size=0, price=price, auto_size=auto_size, reduce_only=True, close=True,
-                             tif=tif)
+        order = FuturesOrder(contract=contract, size=0, price=price, auto_size=auto_size, reduce_only=True, close=False,tif=tif)
         return futures_api.create_futures_order(settle, order)
     except Exception as e:
         logger.error(f"获取平仓订单失败 contract={contract}, auto_size={auto_size}, price={price}, error={e}")
@@ -242,3 +241,13 @@ def get_cex_sticker(contract: str):
     except GateApiException as e:
         logger.error(f"获取现货行情失败 contract={contract}, error={e}")
         return None
+
+cex_futures_close_position("SOL_USDT")
+
+# 合约做空
+# cex_futures_place("SOL_USDT", "0", 1)
+# cex_spot_place("SOL_USDT", "buy",  "160")
+#
+#
+# cex_spot_place("SOL_USDT", "sell",  "1")
+
