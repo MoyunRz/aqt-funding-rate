@@ -10,77 +10,115 @@ fee = 0.062 / 100.0 * 3
 balance = 200
 lever = "2"
 
+# 写个map
+mp = {}
+
+def watch_filter_funding():
+    r = rest.get_cex_contracts()
+    if r is None:
+        logger.warning("无法获取合约列表")
+        return
+    # 过滤
+    global mp
+    flist = []
+    for v in r:
+        funding_rate = float(v.funding_rate) * 100.0
+        if funding_rate > 0.3 or funding_rate < -0.3:
+            candle = mp.get(v.name)
+            if candle is None:
+                sticker = rest.get_cex_spot_candle(v.name,"1m",1)
+                if sticker is None or len(sticker) == 0:
+                    time.sleep(1)
+                    continue
+                mp[v.name] = v
+                flist.append(v)
+                logger.info(f"{v.name} 资金费率(%): {funding_rate}")
+            else:
+                flist.append(v)
+
+
+    # 自定义排序规则
+    def custom_sort_key(item):
+        # 按资 金费率的绝对值*每天的次数 从大到小排序
+        rate = abs(float(item.funding_rate)) * 100.0
+        interval = float(24 * 60 * 60) / float(v.funding_interval)
+        return rate * interval
+
+    # 使用自定义排序规则对过滤后的列表进行排序
+    flist.sort(key=custom_sort_key, reverse=True)
+    if len(flist) == 0:
+        logger.warning("没有合适的合约")
+        return
+    return flist[0]
+
+
 def watch_history_funding():
     """
     根据资金费率进行套利
     :return:
     """
-    r = rest.get_cex_contracts()
-    if r is None:
-        logger.warning("无法获取合约列表")
+    # 已经有持仓，跳过
+    fps = rest.get_cex_all_position()
+    if fps is not None and len(fps) > 0:
+        logger.warning("已经存在仓位信息，跳过本次")
         return
-    for v in r:
-        funding_rate = float(v.funding_rate) * 100.0
 
-        if funding_rate > 0.1 or funding_rate < -0.1:
+    item = watch_filter_funding()
+    if item is None:
+        logger.warning("没有合适的合约")
+        return
+    # 判断现在是不是快到了下次费率结算时间点
+    # 获取当前的时间戳
+    current_timestamp = int(time.time())
+    if current_timestamp % item.funding_interval > (item.funding_interval - 10):
+        fticker = rest.get_cex_fticker(item.name)
+        if fticker is None or len(fticker) == 0:
+            logger.warning(f"无法获取 {item.name} 的合约行情数据")
+            time.sleep(1)
+            return
+        sticker = rest.get_cex_sticker(item.name)
+        if sticker is None or len(sticker) == 0:
+            logger.warning(f"无法获取 {item.name} 的合约行情数据")
+            time.sleep(1)
+            return
+        # 最新卖方最低价
+        f_ask = fticker[0].lowest_ask
+        f_bid = fticker[0].highest_bid
+        s_ask = sticker[0].lowest_ask
+        wallet = rest.get_cex_wallet_balance()
+        if wallet is None:
+            logger.warning("无法获取钱包余额")
+            return
+        # wallet_futures = wallet.details["futures"]
+        wallet_margin = wallet.details["spot"]
 
-            logger.info(f"{v.name} 资金费率(%): {funding_rate}")
-            # 判断现在是不是快到了下次费率结算时间点
-            # 获取当前的时间戳
-            current_timestamp = int(time.time())
-            # print(f"当前时间戳: {current_timestamp}")
-            if current_timestamp % v.funding_interval > (v.funding_interval-10):
-                fticker = rest.get_cex_fticker(v.name)
-                if fticker is None or len(fticker) == 0:
-                    logger.warning(f"无法获取 {v.name} 的合约行情数据")
-                    time.sleep(1)
-                    continue
+        # futures_amount = float(wallet_futures.amount)
+        spot_amount = float(wallet_margin.amount)
+        if spot_amount >= balance * 2:
+            # 设置杠杠
+            rest.set_cex_margin_leverage(item.name, lever)
+            rest.set_cex_leverage(item.name, lever)
+            # 根据合约的乘数 计算 张数 币数量
+            if funding_rate > 0:
+                size = int(float(balance) / float(f_bid))
+                csz = 1.0 / float(item.quanto_multiplier) * size
+                if csz < 1:
+                    return
+                # 如果是正数费
+                # 合约需要做空 看买盘
+                # 现货需要做多 buy 看卖盘
+                size = float(s_ask) * size * 1.01
+                open_order(item.name, size, int(-csz))
+            else:
+                size = int(float(balance) / float(f_ask))
+                csz = 1.0 / float(item.quanto_multiplier) * size
+                if csz < 1:
+                    return
+                # 如果是负数费率
+                # 合约需要做多 看卖盘
+                # 现货需要做空 sell 看买盘
+                open_order(item.name, size, int(csz))
 
-                sticker = rest.get_cex_sticker(v.name)
-                if fticker is None or len(fticker) == 0:
-                    logger.warning(f"无法获取 {v.name} 的合约行情数据")
-                    time.sleep(1)
-                    continue
-
-                # 最新卖方最低价
-                f_ask = fticker[0].lowest_ask
-                f_bid = fticker[0].highest_bid
-                s_ask = sticker[0].lowest_ask
-                s_bid = sticker[0].highest_bid
-                wallet = rest.get_cex_wallet_balance()
-                if wallet is None:
-                    logger.warning("无法获取钱包余额")
-                    continue
-
-                # wallet_futures = wallet.details["futures"]
-                wallet_margin = wallet.details["spot"]
-
-                # futures_amount = float(wallet_futures.amount)
-                spot_amount = float(wallet_margin.amount)
-                if spot_amount >= balance * 2:
-                    # 设置杠杠
-                    rest.set_cex_margin_leverage(v.name, lever)
-                    rest.set_cex_leverage(v.name, lever)
-                    # 根据合约的乘数 计算 张数 币数量
-                    if funding_rate > 0:
-                        size = int(float(balance) / float(f_bid))
-                        csz = 1.0 / float(v.quanto_multiplier) * size
-                        if csz < 1:
-                            continue
-                        # 如果是正数费
-                        # 合约需要做空 看买盘
-                        # 现货需要做多 buy 看卖盘
-                        size = float(s_ask) * size * 1.01
-                        open_order(v.name, size, int(-csz))
-                    else:
-                        size = int(float(balance) / float(f_ask))
-                        csz = 1.0 / float(v.quanto_multiplier) * size
-                        if csz < 1:
-                            continue
-                        # 如果是负数费率
-                        # 合约需要做多 看卖盘
-                        # 现货需要做空 sell 看买盘
-                        open_order(v.name, size, int(csz))
 
 def open_order(name: str, size: float, csz: int):
     """
