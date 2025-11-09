@@ -69,7 +69,7 @@ fee = 0.062 / 100.0 * 3
 # 每次交易的余额（单边）
 balance = 200
 # 杠杆倍数
-lever = "2"
+lever = "3"
 
 # ==================== 全局缓存 ====================
 # 用于缓存已经检测过的合约信息，避免重复API调用
@@ -100,11 +100,14 @@ def watch_filter_funding():
     
     # 遍历所有合约，筛选高资金费率的合约
     for v in r:
+        if v.name == "MERL_USDT":
+            continue
         # 将资金费率转换为百分比
         funding_rate = float(v.funding_rate) * 100.0
         
         # 只关注资金费率绝对值 > 0.3% 的合约（套利空间大）
-        if funding_rate > 0.3 or funding_rate < -0.3:
+        if funding_rate >= 0.6 or funding_rate <= -0.6:
+            print(v.name)
             # 检查是否已经在缓存中
             candle = mp.get(v.name)
             if candle is None:
@@ -140,7 +143,7 @@ def watch_filter_funding():
     
     # 如果没有符合条件的合约，返回 None
     if len(flist) == 0:
-        logger.warning("没有合适的合约")
+        # logger.warning("没有合适的合约")
         return
     
     # 返回资金费率最高（套利价值最大）的合约
@@ -174,7 +177,7 @@ def watch_history_funding():
     # ==================== 第2步：获取最优套利合约 ====================
     item = watch_filter_funding()
     if item is None:
-        logger.warning("没有合适的合约")
+        # logger.warning("没有合适的合约")
         return
     
     # ==================== 第3步：判断是否接近结算时间 ====================
@@ -488,20 +491,3 @@ def run_funding():
         # 捕获所有异常，避免程序崩溃
         logger.error(f"程序运行出现异常: {e}")
 
-# ==================== 程序入口 ====================
-if __name__ == "__main__":
-    """
-    程序入口
-    
-    执行资金费率套利策略：
-    - 自动扫描市场上资金费率最高的合约
-    - 在资金费率结算前开仓（合约+现货对冲）
-    - 收取资金费率后，等待盈利平仓
-    
-    使用方法：
-        python gate_funding.py
-    
-    退出方法：
-        按 Ctrl+C 中断程序
-    """
-    run_funding()

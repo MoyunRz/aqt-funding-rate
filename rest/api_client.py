@@ -54,6 +54,7 @@ Gate.io API 客户端管理模块
 import os
 import logging
 from typing import Optional, Dict
+from dotenv import load_dotenv
 from gate_api import (
     Configuration, 
     ApiClient, 
@@ -66,7 +67,6 @@ from gate_api import (
 
 # ==================== 日志配置 ====================
 logger = logging.getLogger(__name__)
-
 
 class GateApiClient:
     """
@@ -352,11 +352,18 @@ def init_api_client_from_env() -> Dict[str, any]:
         futures_api = clients['futures_api']
         ```
     """
+    # 确保加载 .env 文件
+    load_dotenv()
+
     use_testnet = os.getenv('GATE_USE_TESTNET', 'true').lower() == 'true'
     settle = os.getenv('GATE_SETTLE', 'usdt')
+    api_key = os.getenv('GATE_API_KEY')  # 不提供默认值，让 GateApiClient 处理
+    api_secret = os.getenv('GATE_API_SECRET')  # 不提供默认值，让 GateApiClient 处理
     
     return get_api_clients(
         use_testnet=use_testnet,
+        api_key=api_key,
+        api_secret=api_secret,
         settle=settle
     )
 

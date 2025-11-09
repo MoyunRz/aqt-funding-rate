@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 from gate_api import FuturesOrder, Order, UnifiedLeverageSetting, MarginMarketLeverage
 
 # ==================== 导入 API 客户端管理器 ====================
-from .api_client import get_api_clients
+from .api_client import get_api_clients, init_api_client_from_env
 
 # ==================== 初始化 API 客户端 ====================
 # 使用客户端管理器获取所有 API 实例
@@ -78,8 +78,12 @@ from .api_client import get_api_clients
 #     from rest.api_client import init_api_client_from_env
 #     clients = init_api_client_from_env()
 
-clients = get_api_clients(use_testnet=True, settle="usdt")
+# env_clients = init_api_client_from_env()
+# clients = get_api_clients(use_testnet=True, settle="usdt")
 
+
+
+clients = init_api_client_from_env()
 # 提取各个 API 实例
 margin_api = clients['margin_api']      # 保证金/杠杆交易API
 spot_api = clients['spot_api']          # 现货交易API
@@ -862,3 +866,5 @@ def get_cex_sticker(contract: str):
 # 测试现货做空
 # cex_spot_place("SOL_USDT", "sell", "1")  # 卖出1个SOL
 
+# set_cex_margin_leverage("BTC_USDT", "5")
+set_cex_unified_leverage("BTC", "3")
