@@ -1,55 +1,4 @@
-"""
-Gate.io API 客户端管理模块
-
-============================================================
-模块功能
-============================================================
-本模块负责管理 Gate.io API 的配置和客户端初始化，包括：
-
-1. API 配置管理
-   - 从配置文件或环境变量加载 API 密钥
-   - 支持正式环境和测试网切换
-   - 提供默认配置和自定义配置
-
-2. API 客户端管理
-   - 统一管理所有 API 客户端实例
-   - 单例模式，避免重复创建
-   - 提供便捷的客户端获取方法
-
-3. 安全性
-   - 避免 API 密钥硬编码
-   - 支持从环境变量读取
-   - 配置文件独立管理
-
-============================================================
-使用方法
-============================================================
-方式一：使用默认配置
-    from rest.api_client import get_api_clients
-    
-    clients = get_api_clients()
-    futures_api = clients['futures_api']
-
-方式二：使用自定义配置
-    from rest.api_client import GateApiClient
-    
-    client = GateApiClient(
-        api_key='your_key',
-        api_secret='your_secret',
-        use_testnet=False
-    )
-    futures_api = client.get_futures_api()
-
-方式三：从环境变量加载
-    export GATE_API_KEY="your_key"
-    export GATE_API_SECRET="your_secret"
-    export GATE_USE_TESTNET="false"
-    
-    from rest.api_client import get_api_clients
-    clients = get_api_clients()
-
-============================================================
-"""
+"""Gate.io API 客户端管理模块（可选，需要 gate_api 库）"""
 
 import os
 import logging
@@ -65,26 +14,10 @@ from gate_api import (
     WalletApi
 )
 
-# ==================== 日志配置 ====================
 logger = logging.getLogger(__name__)
 
 class GateApiClient:
-    """
-    Gate.io API 客户端管理器
-    
-    功能：
-    - 管理 API 配置和认证
-    - 创建和管理各类 API 客户端
-    - 支持单例模式
-    
-    属性：
-        config: Gate.io API 配置对象
-        margin_api: 保证金/杠杆交易 API
-        spot_api: 现货交易 API
-        unified_api: 统一账户 API
-        futures_api: 合约交易 API
-        wallet_api: 钱包 API
-    """
+    """Gate.io API 客户端管理器"""
     
     # 类变量：单例实例
     _instance: Optional['GateApiClient'] = None
@@ -116,12 +49,9 @@ class GateApiClient:
         self.settle = settle
         self.use_testnet = use_testnet
         
-        # ==================== 第1步：获取 API 密钥 ====================
-        # 优先级：参数 > 环境变量 > 默认值
         self.api_key = api_key or os.getenv('GATE_API_KEY') or self._get_default_key()
         self.api_secret = api_secret or os.getenv('GATE_API_SECRET') or self._get_default_secret()
         
-        # ==================== 第2步：确定 API 主机地址 ====================
         if use_testnet:
             # 测试网地址
             self.host = "https://api-testnet.gateapi.io/api/v4"
@@ -131,14 +61,12 @@ class GateApiClient:
             self.host = "https://api.gateio.ws/api/v4"
             logger.info("使用 Gate.io 正式环境")
         
-        # ==================== 第3步：创建 API 配置 ====================
         self.config = Configuration(
             key=self.api_key,
             secret=self.api_secret,
             host=self.host
         )
         
-        # ==================== 第4步：初始化 API 客户端 ====================
         self._api_client = ApiClient(self.config)
         
         # 创建各类 API 实例
@@ -276,8 +204,6 @@ class GateApiClient:
         }
 
 
-# ==================== 便捷函数 ====================
-
 def get_api_clients(
     api_key: Optional[str] = None,
     api_secret: Optional[str] = None,
@@ -330,20 +256,13 @@ def init_api_client_from_env() -> Dict[str, any]:
     需要设置以下环境变量：
         - GATE_API_KEY: API Key
         - GATE_API_SECRET: API Secret
-        - GATE_USE_TESTNET (可选): true/false，默认 true
+        - USE_TESTNET (可选): true/false，默认 true
         - GATE_SETTLE (可选): usdt/btc，默认 usdt
     
     Returns:
         dict: 包含所有 API 客户端的字典
     
     使用示例：
-        ```bash
-        # 设置环境变量
-        export GATE_API_KEY="your_api_key"
-        export GATE_API_SECRET="your_api_secret"
-        export GATE_USE_TESTNET="false"
-        export GATE_SETTLE="usdt"
-        ```
         
         ```python
         from rest.api_client import init_api_client_from_env
@@ -355,10 +274,10 @@ def init_api_client_from_env() -> Dict[str, any]:
     # 确保加载 .env 文件
     load_dotenv()
 
-    use_testnet = os.getenv('GATE_USE_TESTNET', 'true').lower() == 'true'
-    settle = os.getenv('GATE_SETTLE', 'usdt')
-    api_key = os.getenv('GATE_API_KEY')  # 不提供默认值，让 GateApiClient 处理
-    api_secret = os.getenv('GATE_API_SECRET')  # 不提供默认值，让 GateApiClient 处理
+    use_testnet = os.getenv('USE_TESTNET', 'true').lower() == 'true'
+    settle = os.getenv('SETTLE', 'usdt')
+    api_key = os.getenv('API_KEY')  # 不提供默认值，让 GateApiClient 处理
+    api_secret = os.getenv('API_SECRET')  # 不提供默认值，让 GateApiClient 处理
     
     return get_api_clients(
         use_testnet=use_testnet,
@@ -368,8 +287,6 @@ def init_api_client_from_env() -> Dict[str, any]:
     )
 
 
-# ==================== 默认客户端实例 ====================
-# 创建默认客户端实例，供直接导入使用
 _default_client = None
 
 def get_default_client() -> GateApiClient:
@@ -385,7 +302,6 @@ def get_default_client() -> GateApiClient:
     return _default_client
 
 
-# ==================== 使用示例 ====================
 if __name__ == "__main__":
     # 示例1：使用默认配置（测试网）
     print("=" * 60)

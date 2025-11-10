@@ -1,49 +1,23 @@
 """
-基于 CCXT 的交易所 API 封装模块
+CCXT 交易所 API 封装模块
 
-============================================================
-模块功能
-============================================================
-使用 CCXT 统一接口封装交易所 API，支持：
+基于 CCXT 统一接口封装多交易所 API，支持合约交易、现货交易、账户管理和市场数据查询。
 
-1. 合约交易（Futures Trading）
-   - 获取合约列表和行情
-   - 合约开仓、平仓
-   - 设置杠杆倍数
-   - 查询持仓信息
+功能：
+- 合约交易：开仓、平仓、查询持仓、设置杠杆
+- 现货交易：买卖、查询订单、获取行情
+- 账户管理：查询余额、设置杠杆
+- 市场数据：K线、行情、交易对信息
 
-2. 现货交易（Spot Trading）
-   - 现货买卖（支持杠杆）
-   - 查询现货订单
-   - 获取现货行情
+支持的交易所：gate, bitget, okx, binance, bybit, huobi, kraken
 
-3. 账户管理（Account Management）
-   - 获取钱包余额
-   - 设置统一账户杠杆
-   - 查询账户信息
+配置方式（.env 文件）：
+    EXCHANGE_ID=gate
+    API_KEY=your_api_key
+    API_SECRET=your_api_secret
+    USE_TESTNET=false
 
-4. 市场数据（Market Data）
-   - 获取K线数据
-   - 获取实时行情
-   - 获取交易对信息
-
-============================================================
-优势
-============================================================
-✅ 统一接口：支持 100+ 交易所
-✅ 维护良好：社区活跃，更新频繁
-✅ 文档完善：详细的 API 文档
-✅ 易于扩展：轻松切换到其他交易所
-
-============================================================
-使用说明
-============================================================
-环境变量配置：
-    export GATE_API_KEY="your_api_key"
-    export GATE_API_SECRET="your_api_secret"
-    export GATE_USE_TESTNET="false"  # 可选
-
-CCXT 文档: https://docs.ccxt.com/
+交易对格式自动转换：统一使用 BTC_USDT 格式，自动转换为交易所特定格式。
 """
 
 import os
@@ -53,14 +27,11 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
 
-# ==================== 日志配置 ====================
 logger = logging.getLogger(__name__)
-
-# ==================== 数据类定义 ====================
 
 @dataclass
 class Contract:
-    """合约信息"""
+    """永续合约信息"""
     name: str
     funding_rate: float
     funding_interval: int
@@ -69,15 +40,12 @@ class Contract:
     index_price: float = 0.0
     
     def __post_init__(self):
-        # CCXT 返回的是小数形式，需要转换
-        if abs(self.funding_rate) < 1:
-            self.funding_rate = self.funding_rate  # 保持原值
         self.funding_interval = int(self.funding_interval)
 
 
 @dataclass
 class Ticker:
-    """行情数据"""
+    """市场行情数据"""
     symbol: str
     last: float
     highest_bid: float
@@ -89,7 +57,7 @@ class Ticker:
 
 @dataclass
 class Position:
-    """持仓信息"""
+    """合约持仓信息"""
     contract: str
     size: int
     leverage: str
@@ -107,7 +75,7 @@ class OrderInfo:
     """订单信息"""
     id: str
     symbol: str
-    side: str  # 'buy' or 'sell'
+    side: str
     amount: float
     price: float
     avg_deal_price: float
@@ -125,62 +93,149 @@ class WalletBalance:
     details: Dict[str, Any]
 
 
-# ==================== CCXT 客户端管理 ====================
+SUPPORTED_EXCHANGES = {
+    'gate': 'gate',
+    'bitget': 'bitget',
+    'okx': 'okx',
+    'okex': 'okx',  # 别名
+    'binance': 'binance',
+    'bybit': 'bybit',
+    'huobi': 'huobi',
+    'kraken': 'kraken',
+}
 
 class CCXTClient:
-    """CCXT 客户端封装"""
+    """CCXT 交易所客户端封装"""
     
     def __init__(
         self,
         api_key: str = None,
         api_secret: str = None,
         use_testnet: bool = False,
-        exchange_id: str = 'gate'
+        exchange_id: str = None
     ):
         """
         初始化 CCXT 客户端
         
         Args:
-            api_key: API Key
-            api_secret: API Secret
-            use_testnet: 是否使用测试网
-            exchange_id: 交易所ID（默认 gate）
+            api_key: API Key，未提供时从环境变量读取
+            api_secret: API Secret，未提供时从环境变量读取
+            use_testnet: 是否使用测试网，未提供时从环境变量读取
+            exchange_id: 交易所ID，未提供时从环境变量 EXCHANGE_ID 读取（默认 gate）
+        
+        环境变量优先级：
+            1. 交易所特定配置：{EXCHANGE_ID}_API_KEY
+            2. 通用配置：API_KEY
+            3. 向后兼容：GATE_API_KEY
         """
+        # 从环境变量加载交易所ID（如果未提供）
+        if exchange_id is None:
+            exchange_id = os.getenv('EXCHANGE_ID', 'gate').lower()
+        
+        # 验证交易所是否支持
+        if exchange_id not in SUPPORTED_EXCHANGES:
+            # 尝试使用别名
+            exchange_id = SUPPORTED_EXCHANGES.get(exchange_id, 'gate')
+            if exchange_id not in SUPPORTED_EXCHANGES:
+                logger.warning(f"不支持的交易所: {exchange_id}，使用默认值: gate")
+                exchange_id = 'gate'
+        
+        self.exchange_id = exchange_id
+        
         # 从环境变量加载配置（如果未提供）
-        self.api_key = api_key or os.getenv('GATE_API_KEY', '')
-        self.api_secret = api_secret or os.getenv('GATE_API_SECRET', '')
-        self.use_testnet = use_testnet or os.getenv('GATE_USE_TESTNET', 'false').lower() == 'true'
+        # 优先级：交易所特定配置 > 通用配置 > 向后兼容配置
+        if api_key is None:
+            # 1. 尝试交易所特定的环境变量
+            exchange_specific_key = os.getenv(f'API_KEY', '')
+            exchange_specific_secret = os.getenv(f'API_SECRET', '')
+            
+            # 2. 尝试通用环境变量（API_KEY, API_SECRET）
+            generic_key = os.getenv('API_KEY', '')
+            generic_secret = os.getenv('API_SECRET', '')
+            
+            # 3. 尝试向后兼容的环境变量（GATE_API_KEY）
+            legacy_key = os.getenv('API_KEY', '')
+            legacy_secret = os.getenv('API_SECRET', '')
+            
+            # 按优先级选择
+            self.api_key = (exchange_specific_key or generic_key or legacy_key)
+            self.api_secret = (exchange_specific_secret or generic_secret or legacy_secret)
+        else:
+            self.api_key = api_key
+            self.api_secret = api_secret
+
+        # 测试网配置（支持交易所特定配置）
+        if use_testnet is False:
+            # 尝试交易所特定的测试网配置
+            exchange_testnet = os.getenv(f'USE_TESTNET', '')
+            if exchange_testnet:
+                self.use_testnet = exchange_testnet.lower() == 'true'
+            else:
+                # 使用通用配置
+                self.use_testnet = os.getenv('USE_TESTNET', 'false').lower() == 'true'
+        else:
+            self.use_testnet = use_testnet
         
         # 创建交易所实例
-        exchange_class = getattr(ccxt, exchange_id)
-        self.exchange = exchange_class({
+        try:
+            exchange_class = getattr(ccxt, exchange_id)
+        except AttributeError:
+            raise ValueError(f"不支持的交易所: {exchange_id}。请确保已安装对应的 CCXT 版本")
+
+        # 根据不同交易所配置选项
+        exchange_options = {
             'apiKey': self.api_key,
             'secret': self.api_secret,
             'enableRateLimit': True,  # 启用速率限制
             'timeout': 30000,  # 30秒超时
-            'options': {
+        }
+        
+        # 交易所特定的配置
+        if exchange_id in ['gate', 'bitget', 'okx', 'bybit']:
+            exchange_options['options'] = {
                 'defaultType': 'swap',  # 默认使用永续合约
                 'defaultSettle': 'usdt',  # 默认USDT结算
             }
-        })
+        elif exchange_id == 'binance':
+            exchange_options['options'] = {
+                'defaultType': 'future',  # Binance 使用 future
+            }
         
+        self.exchange = exchange_class(exchange_options)
+
         # 如果使用测试网
         if self.use_testnet:
-            self.exchange.set_sandbox_mode(True)
-            logger.info("✅ CCXT 客户端已切换到测试网模式")
+            try:
+                self.exchange.set_sandbox_mode(True)
+                logger.info("CCXT 客户端已切换到测试网模式")
+            except Exception as e:
+                logger.warning(f"该交易所可能不支持测试网模式: {e}")
         
-        logger.info(f"✅ CCXT 客户端初始化完成 - 交易所: {exchange_id}, 测试网: {self.use_testnet}")
+        # 验证 API 密钥（如果已配置）
+        if self.api_key and self.api_secret:
+            try:
+                # 尝试获取账户信息来验证 API 密钥
+                test_balance = self.exchange.fetch_balance()
+                logger.info(f"CCXT 客户端初始化完成 - 交易所: {exchange_id}, 测试网: {self.use_testnet}, API 密钥验证成功")
+            except Exception as e:
+                error_msg = str(e)
+                if 'Invalid key' in error_msg or 'INVALID_KEY' in error_msg:
+                    logger.warning(f"API 密钥验证失败: 密钥无效或权限不足")
+                    logger.warning(f"提示：请检查 API 密钥是否正确，以及是否具有必要的交易权限")
+                else:
+                    logger.warning(f"API 密钥验证时出现错误: {e}")
+                logger.info(f"CCXT 客户端初始化完成 - 交易所: {exchange_id}, 测试网: {self.use_testnet}")
+        else:
+            logger.info(f"CCXT 客户端初始化完成 - 交易所: {exchange_id}, 测试网: {self.use_testnet} (未配置 API 密钥)")
     
     def load_markets(self):
         """加载市场数据"""
         try:
             return self.exchange.load_markets()
         except Exception as e:
-            logger.error(f"❌ 加载市场数据失败: {e}")
+            logger.error(f"加载市场数据失败: {e}")
             return None
 
-
-# ==================== 全局客户端实例 ====================
 
 _ccxt_client: Optional[CCXTClient] = None
 
@@ -200,71 +255,103 @@ def init_ccxt_client(api_key: str = None, api_secret: str = None, use_testnet: b
     return _ccxt_client
 
 
-# ==================== 合约交易 API ====================
-
-def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
+def normalize_contract_name(contract: str, exchange_id: str = None, is_spot: bool = False) -> str:
     """
-    获取合约列表
+    将统一格式的合约名称转换为交易所特定格式
     
     Args:
-        contract: 合约名称筛选（可选）
+        contract: 统一格式，如 "BTC_USDT"
+        exchange_id: 交易所ID，None时从客户端获取
+        is_spot: 是否为现货交易
     
     Returns:
-        合约列表或 None
+        交易所特定的交易对格式
     """
+    if exchange_id is None:
+        client = get_ccxt_client()
+        exchange_id = client.exchange_id
+    
+    # 统一格式: BTC_USDT
+    if '_' in contract:
+        base, quote = contract.split('_', 1)
+    else:
+        # 如果已经是其他格式，尝试解析
+        base = contract.replace('USDT', '').replace('USD', '')
+        quote = 'USDT'
+    
+    # 现货交易格式（大部分交易所都是 BTC/USDT）
+    if is_spot:
+        if exchange_id == 'huobi':
+            return f"{base}-{quote}"
+        else:
+            return f"{base}/{quote}"
+    
+    # 合约交易格式
+    if exchange_id in ['gate', 'bitget', 'okx', 'bybit']:
+        # Gate.io, Bitget, OKX, Bybit: BTC/USDT:USDT
+        return f"{base}/{quote}:USDT"
+    elif exchange_id == 'binance':
+        # Binance: BTC/USDT:USDT
+        return f"{base}/{quote}:USDT"
+    elif exchange_id == 'huobi':
+        # Huobi: BTC-USDT
+        return f"{base}-{quote}"
+    else:
+        # 默认格式
+        return f"{base}/{quote}:USDT"
+
+
+def denormalize_contract_name(symbol: str) -> str:
+    """将交易所特定的交易对格式转换为统一格式（BTC_USDT）"""
+    symbol = symbol.split(':')[0]
+    return symbol.replace('/', '_').replace('-', '_')
+
+
+def get_exchange_id() -> str:
+    """获取当前使用的交易所ID"""
+    client = get_ccxt_client()
+    return client.exchange_id
+
+
+def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
+    """获取永续合约列表"""
     try:
         client = get_ccxt_client()
         
         # 加载市场数据（带进度提示）
         logger.info("正在加载市场数据，这可能需要一些时间...")
         markets = client.exchange.load_markets()
-        logger.info(f"✅ 已加载 {len(markets)} 个市场")
+        logger.info(f"已加载 {len(markets)} 个市场")
         
         contracts = []
         swap_markets = []
         
-        # 第一步：筛选出所有永续合约
         for symbol, market in markets.items():
-            # 只获取永续合约（swap）
-            if market.get('type') != 'swap':
+            if market.get('type') != 'swap' or market.get('settle') != 'USDT':
                 continue
             
-            # USDT 结算
-            if market.get('settle') != 'USDT':
-                continue
-            
-            # 如果指定了合约名称，进行筛选
             if contract:
-                symbol_normalized = symbol.replace('/', '_').replace(':USDT', '')
-                if symbol_normalized != contract:
+                if denormalize_contract_name(symbol) != contract:
                     continue
             
             swap_markets.append((symbol, market))
         
         logger.info(f"找到 {len(swap_markets)} 个 USDT 永续合约，正在获取资金费率...")
         
-        # 第二步：批量获取资金费率（减少API调用）
         for idx, (symbol, market) in enumerate(swap_markets):
             if idx > 0 and idx % 10 == 0:
                 logger.info(f"已处理 {idx}/{len(swap_markets)} 个合约...")
             
-            # 获取资金费率
             try:
                 funding_rate_info = client.exchange.fetch_funding_rate(symbol)
                 funding_rate = funding_rate_info.get('fundingRate', 0)
-                funding_timestamp = funding_rate_info.get('fundingTimestamp', 0)
                 
-                # 计算下次结算时间间隔（秒）
-                funding_interval = 8 * 3600  # Gate.io 默认 8 小时
-                
-                # 获取合约乘数
+                funding_interval = 8 * 3600
                 contract_size = market.get('contractSize', 1)
                 quanto_multiplier = 1.0 / contract_size if contract_size > 0 else 1.0
                 
-                # 获取标记价格（使用市场数据中的价格，避免额外API调用）
                 mark_price = market.get('info', {}).get('mark_price', 0)
                 if not mark_price:
-                    # 如果市场数据中没有，再调用API
                     try:
                         ticker = client.exchange.fetch_ticker(symbol)
                         mark_price = ticker.get('last', 0)
@@ -272,7 +359,7 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
                         mark_price = 0
                 
                 contracts.append(Contract(
-                    name=symbol.replace('/', '_').replace(':USDT', ''),  # BTC/USDT:USDT -> BTC_USDT
+                    name=denormalize_contract_name(symbol),  # BTC/USDT:USDT -> BTC_USDT
                     funding_rate=funding_rate,
                     funding_interval=funding_interval,
                     quanto_multiplier=quanto_multiplier,
@@ -283,30 +370,19 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
                 logger.debug(f"跳过合约 {symbol}: {e}")
                 continue
         
-        logger.info(f"✅ 成功获取 {len(contracts)} 个合约信息")
+        logger.info(f"成功获取 {len(contracts)} 个合约信息")
         return contracts if contracts else None
         
     except Exception as e:
-        logger.error(f"❌ 获取合约列表失败: {e}", exc_info=True)
+        logger.error(f"获取合约列表失败: {e}", exc_info=True)
         return None
 
 
 def get_cex_fticker(contract: str) -> Optional[List[Ticker]]:
-    """
-    获取合约行情
-    
-    Args:
-        contract: 合约名称（如 BTC_USDT）
-    
-    Returns:
-        行情列表或 None
-    """
+    """获取合约行情"""
     try:
         client = get_ccxt_client()
-        
-        # 转换合约名称格式: BTC_USDT -> BTC/USDT:USDT
-        symbol = contract.replace('_', '/') + ':USDT'
-        
+        symbol = normalize_contract_name(contract, client.exchange_id)
         ticker = client.exchange.fetch_ticker(symbol)
         
         return [Ticker(
@@ -320,33 +396,18 @@ def get_cex_fticker(contract: str) -> Optional[List[Ticker]]:
         )]
         
     except Exception as e:
-        logger.error(f"❌ 获取合约行情失败 {contract}: {e}")
+        logger.error(f"获取合约行情失败 {contract}: {e}")
         return None
 
 
 def cex_futures_place(contract: str, price: str, size: int) -> Optional[OrderInfo]:
-    """
-    合约下单（市价单）
-    
-    Args:
-        contract: 合约名称（如 BTC_USDT）
-        price: 价格（"0"表示市价单）
-        size: 数量（正数=做多，负数=做空）
-    
-    Returns:
-        订单信息或 None
-    """
+    """合约下单（市价单）"""
     try:
         client = get_ccxt_client()
-        
-        # 转换合约名称
-        symbol = contract.replace('_', '/') + ':USDT'
-        
-        # 判断买卖方向
+        symbol = normalize_contract_name(contract, client.exchange_id)
         side = 'buy' if size > 0 else 'sell'
         amount = abs(size)
         
-        # 市价单
         order = client.exchange.create_order(
             symbol=symbol,
             type='market',
@@ -367,25 +428,17 @@ def cex_futures_place(contract: str, price: str, size: int) -> Optional[OrderInf
         )
         
     except Exception as e:
-        logger.error(f"❌ 合约下单失败 {contract}: {e}")
+        logger.error(f"合约下单失败 {contract}: {e}")
         return None
 
 
 def cex_futures_close_position(contract: str) -> bool:
-    """
-    平掉合约仓位
-    
-    Args:
-        contract: 合约名称（如 BTC_USDT）
-    
-    Returns:
-        是否成功
-    """
+    """平掉合约仓位"""
     try:
         client = get_ccxt_client()
         
-        # 转换合约名称
-        symbol = contract.replace('_', '/') + ':USDT'
+        # 转换合约名称格式为交易所特定格式
+        symbol = normalize_contract_name(contract, client.exchange_id)
         
         # 获取当前持仓
         positions = client.exchange.fetch_positions([symbol])
@@ -410,31 +463,23 @@ def cex_futures_close_position(contract: str) -> bool:
                 params=params
             )
             
-            logger.info(f"✅ 平仓成功: {contract}")
+            logger.info(f"平仓成功: {contract}")
             return True
         
         return True
         
     except Exception as e:
-        logger.error(f"❌ 平仓失败 {contract}: {e}")
+        logger.error(f"平仓失败 {contract}: {e}")
         return False
 
 
 def get_cex_position(contract: str) -> Optional[Position]:
-    """
-    获取合约持仓
-    
-    Args:
-        contract: 合约名称（如 BTC_USDT）
-    
-    Returns:
-        持仓信息或 None
-    """
+    """获取合约持仓"""
     try:
         client = get_ccxt_client()
         
-        # 转换合约名称
-        symbol = contract.replace('_', '/') + ':USDT'
+        # 转换合约名称格式为交易所特定格式
+        symbol = normalize_contract_name(contract, client.exchange_id)
         
         positions = client.exchange.fetch_positions([symbol])
         
@@ -465,17 +510,12 @@ def get_cex_position(contract: str) -> Optional[Position]:
         )
         
     except Exception as e:
-        logger.error(f"❌ 获取持仓失败 {contract}: {e}")
+        logger.error(f"获取持仓失败 {contract}: {e}")
         return None
 
 
 def get_cex_all_position() -> Optional[List[Position]]:
-    """
-    获取所有合约持仓
-    
-    Returns:
-        持仓列表或 None
-    """
+    """获取所有合约持仓"""
     try:
         client = get_ccxt_client()
         
@@ -488,8 +528,8 @@ def get_cex_all_position() -> Optional[List[Position]]:
                 continue
             
             symbol = position.get('symbol', '')
-            # 转换格式: BTC/USDT:USDT -> BTC_USDT
-            contract_name = symbol.split(':')[0].replace('/', '_')
+            # 转换格式为统一格式
+            contract_name = denormalize_contract_name(symbol)
             
             result.append(Position(
                 contract=contract_name,
@@ -504,79 +544,76 @@ def get_cex_all_position() -> Optional[List[Position]]:
         return result if result else None
         
     except Exception as e:
-        logger.error(f"❌ 获取所有持仓失败: {e}")
+        logger.error(f"获取所有持仓失败: {e}")
         return None
 
 
 def set_cex_leverage(contract: str, leverage: str) -> bool:
-    """
-    设置合约杠杆
-    
-    Args:
-        contract: 合约名称（如 BTC_USDT）
-        leverage: 杠杆倍数
-    
-    Returns:
-        是否成功
-    """
+    """设置合约杠杆"""
     try:
         client = get_ccxt_client()
         
-        # 转换合约名称
-        symbol = contract.replace('_', '/') + ':USDT'
+        # 转换合约名称格式为交易所特定格式
+        symbol = normalize_contract_name(contract, client.exchange_id)
         
         client.exchange.set_leverage(int(leverage), symbol)
-        logger.info(f"✅ 设置杠杆成功: {contract} -> {leverage}x")
+        logger.info(f"设置杠杆成功: {contract} -> {leverage}x")
         return True
         
     except Exception as e:
-        logger.error(f"❌ 设置杠杆失败 {contract}: {e}")
+        logger.error(f"设置杠杆失败 {contract}: {e}")
         return False
 
 
 def set_cex_dual_mode(dual_mode: bool) -> bool:
-    """
-    设置持仓模式（单向/双向）
-    
-    Args:
-        dual_mode: True=双向持仓，False=单向持仓
-    
-    Returns:
-        是否成功
-    """
+    """设置持仓模式（True=双向，False=单向）"""
     try:
         client = get_ccxt_client()
         
-        # Gate.io 通过 CCXT 设置持仓模式
-        mode = 'hedged' if dual_mode else 'one-way'
+        # 检查 API 密钥是否配置
+        if not client.api_key or not client.api_secret:
+            logger.warning("API 密钥未配置，无法设置持仓模式")
+            return False
         
-        # 注意：不是所有交易所都支持此功能
-        client.exchange.set_position_mode(hedged=dual_mode)
-        logger.info(f"✅ 设置持仓模式: {'双向' if dual_mode else '单向'}")
-        return True
+        # 对于 Gate.io，持仓模式设置可能需要特定权限
+        # 如果设置失败，不影响策略运行（策略使用单向持仓模式）
+        try:
+            # 尝试使用 CCXT 标准方法
+            client.exchange.set_position_mode(hedged=dual_mode)
+            logger.info(f"设置持仓模式: {'双向' if dual_mode else '单向'}")
+            return True
+        except Exception as e:
+            error_msg = str(e)
+            
+            # 检查是否是 API 密钥错误
+            if 'Invalid key' in error_msg or 'INVALID_KEY' in error_msg:
+                logger.warning(f"API 密钥无效或权限不足，无法设置持仓模式")
+                logger.warning(f"提示：请检查 API 密钥是否正确，以及是否具有合约交易权限")
+                logger.warning(f"策略将继续运行（Gate.io 默认使用单向持仓模式）")
+            elif 'not supported' in error_msg.lower() or 'unsupported' in error_msg.lower():
+                logger.warning(f"该交易所不支持设置持仓模式: {e}")
+            else:
+                logger.warning(f"设置持仓模式失败: {e}")
+            
+            # 对于 Gate.io，如果设置失败，默认使用单向模式（不影响策略）
+            if not dual_mode:
+                logger.info("策略使用单向持仓模式，无需额外设置")
+                return True
+            
+            return False
         
     except Exception as e:
-        logger.warning(f"⚠️ 设置持仓模式失败（可能不支持）: {e}")
+        logger.warning(f"设置持仓模式时发生错误: {e}")
         return False
 
 
-# ==================== 现货交易 API ====================
-
 def get_cex_sticker(contract: str) -> Optional[List[Ticker]]:
-    """
-    获取现货行情
-    
-    Args:
-        contract: 交易对名称（如 BTC_USDT）
-    
-    Returns:
-        行情列表或 None
-    """
+    """获取现货行情"""
     try:
         client = get_ccxt_client()
         
-        # 转换格式: BTC_USDT -> BTC/USDT
-        symbol = contract.replace('_', '/')
+        # 转换格式为交易所特定格式（现货）
+        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
         
         ticker = client.exchange.fetch_ticker(symbol)
         
@@ -591,27 +628,17 @@ def get_cex_sticker(contract: str) -> Optional[List[Ticker]]:
         )]
         
     except Exception as e:
-        logger.error(f"❌ 获取现货行情失败 {contract}: {e}")
+        logger.error(f"获取现货行情失败 {contract}: {e}")
         return None
 
 
 def get_cex_spot_candle(contract: str, interval: str = "1m", limit: int = 100) -> Optional[list]:
-    """
-    获取现货K线数据
-    
-    Args:
-        contract: 交易对名称（如 BTC_USDT）
-        interval: 时间周期（1m, 5m, 15m, 1h, 4h, 1d等）
-        limit: 数量限制
-    
-    Returns:
-        K线数据列表或 None
-    """
+    """获取现货K线数据"""
     try:
         client = get_ccxt_client()
         
-        # 转换格式
-        symbol = contract.replace('_', '/')
+        # 转换格式为交易所特定格式（现货）
+        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
         
         # 获取OHLCV数据
         ohlcv = client.exchange.fetch_ohlcv(symbol, timeframe=interval, limit=limit)
@@ -619,27 +646,17 @@ def get_cex_spot_candle(contract: str, interval: str = "1m", limit: int = 100) -
         return ohlcv if ohlcv else None
         
     except Exception as e:
-        logger.error(f"❌ 获取K线数据失败 {contract}: {e}")
+        logger.error(f"获取K线数据失败 {contract}: {e}")
         return None
 
 
 def cex_spot_place(contract: str, side: str, amount: str) -> Optional[OrderInfo]:
-    """
-    现货下单（市价单）
-    
-    Args:
-        contract: 交易对名称（如 BTC_USDT）
-        side: 买卖方向（'buy' 或 'sell'）
-        amount: 金额（USDT）
-    
-    Returns:
-        订单信息或 None
-    """
+    """现货下单（市价单）"""
     try:
         client = get_ccxt_client()
         
-        # 转换格式
-        symbol = contract.replace('_', '/')
+        # 转换格式为交易所特定格式（现货）
+        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
         
         # 市价单
         order = client.exchange.create_order(
@@ -663,25 +680,17 @@ def cex_spot_place(contract: str, side: str, amount: str) -> Optional[OrderInfo]
         )
         
     except Exception as e:
-        logger.error(f"❌ 现货下单失败 {contract}: {e}")
+        logger.error(f"现货下单失败 {contract}: {e}")
         return None
 
 
 def find_cex_spot_orders(contract: str) -> Optional[List[OrderInfo]]:
-    """
-    查询现货订单历史（仅返回已完成的订单）
-    
-    Args:
-        contract: 交易对名称（如 BTC_USDT）
-    
-    Returns:
-        订单列表或 None（仅包含状态为 'closed' 的已完成订单）
-    """
+    """查询现货订单历史（仅返回已完成的订单）"""
     try:
         client = get_ccxt_client()
         
-        # 转换格式
-        symbol = contract.replace('_', '/')
+        # 转换格式为交易所特定格式（现货）
+        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
         
         # 获取最近订单
         orders = client.exchange.fetch_orders(symbol, limit=50)
@@ -709,67 +718,41 @@ def find_cex_spot_orders(contract: str) -> Optional[List[OrderInfo]]:
         return result if result else None
         
     except Exception as e:
-        logger.error(f"❌ 查询订单失败 {contract}: {e}")
+        logger.error(f"查询订单失败 {contract}: {e}")
         return None
 
 
 def set_cex_margin_leverage(contract: str, leverage: str) -> bool:
-    """
-    设置现货杠杆（逐仓）
-    
-    Args:
-        contract: 交易对名称（如 BTC_USDT）
-        leverage: 杠杆倍数
-    
-    Returns:
-        是否成功
-    """
+    """设置现货杠杆（逐仓）"""
     try:
         client = get_ccxt_client()
         
-        # 转换格式
-        symbol = contract.replace('_', '/')
+        # 转换格式为交易所特定格式（现货）
+        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
         
         # 某些交易所支持设置保证金杠杆
         client.exchange.set_leverage(int(leverage), symbol, params={'marginMode': 'isolated'})
-        logger.info(f"✅ 设置现货杠杆成功: {contract} -> {leverage}x")
+        logger.info(f"设置现货杠杆成功: {contract} -> {leverage}x")
         return True
         
     except Exception as e:
-        logger.warning(f"⚠️ 设置现货杠杆失败（可能不支持）{contract}: {e}")
+        logger.warning(f"设置现货杠杆失败（可能不支持）{contract}: {e}")
         return False
 
 
 def set_cex_unified_leverage(currency: str, leverage: str) -> bool:
-    """
-    设置统一账户杠杆
-    
-    Args:
-        currency: 币种（如 BTC）
-        leverage: 杠杆倍数
-    
-    Returns:
-        是否成功
-    """
+    """设置统一账户杠杆"""
     try:
-        # 统一账户杠杆设置通常在账户级别，不是所有交易所都支持
-        logger.warning(f"⚠️ 统一账户杠杆设置在 CCXT 中可能不直接支持")
+        logger.warning(f"统一账户杠杆设置在 CCXT 中可能不直接支持")
         return True
         
     except Exception as e:
-        logger.error(f"❌ 设置统一账户杠杆失败 {currency}: {e}")
+        logger.error(f"设置统一账户杠杆失败 {currency}: {e}")
         return False
 
 
-# ==================== 账户管理 API ====================
-
 def get_cex_wallet_balance() -> Optional[WalletBalance]:
-    """
-    获取钱包余额
-    
-    Returns:
-        钱包余额或 None
-    """
+    """获取钱包余额"""
     try:
         client = get_ccxt_client()
         
@@ -790,15 +773,8 @@ def get_cex_wallet_balance() -> Optional[WalletBalance]:
         )
         
     except Exception as e:
-        logger.error(f"❌ 获取钱包余额失败: {e}")
+        logger.error(f"获取钱包余额失败: {e}")
         return None
-
-
-# ==================== 兼容性接口 ====================
-# 为了保持向后兼容，提供与旧 API 相同的函数名
-
-# 这些函数现在内部调用 CCXT 实现
-# 无需修改策略代码即可切换到 CCXT
 
 __all__ = [
     # 客户端

@@ -23,7 +23,7 @@ GATE_API_KEY=your_api_key_here
 GATE_API_SECRET=your_api_secret_here
 
 # 可选：使用测试网
-GATE_USE_TESTNET=false
+USE_TESTNET=false
 ```
 
 ### 步骤 2：测试 CCXT
@@ -221,7 +221,7 @@ Gate.io 测试网需要单独申请：
 
 ```bash
 # 切换到正式网
-export GATE_USE_TESTNET=false
+export USE_TESTNET=false
 ```
 
 ### 问题 4：速率限制错误

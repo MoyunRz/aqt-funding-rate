@@ -1,10 +1,4 @@
-"""
-REST API 模块
-
-包含：
-- api_client: API 客户端管理器（可选，需要 gate_api）
-- ccxt_client: CCXT 统一接口封装（已替代 rest.py，推荐使用）
-"""
+"""REST API 模块：包含 CCXT 统一接口封装和可选的 Gate.io API 客户端"""
 
 # 可选导入 api_client（如果安装了 gate_api）
 try:
