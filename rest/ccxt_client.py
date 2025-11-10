@@ -823,61 +823,111 @@ def cex_spot_place(contract: str, side: str, cost: str, size: str) -> Optional[O
         # 转换格式为交易所特定格式（现货杠杆使用 margin 市场类型）
         symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
         
-        cost_amount = f'{float(cost):.2f}'
-        
         # 验证成本金额
-        if cost_amount <= 0:
-            logger.error(f"成本金额无效: {cost_amount}，必须大于 0")
+        cost_float = float(cost)
+        if cost_float <= 0:
+            logger.error(f"成本金额无效: {cost_float}，必须大于 0")
             return None
         
-        # 现货杠杆交易参数
+        # 格式化为字符串（保留2位小数）
+        cost_amount = f'{cost_float:.2f}'
+        
+        # 现货杠杆交易参数（全仓模式）
         params = {
-            'loanType': "autoLoanAndRepay",
-            'marginMode': 'crossed', # 使用逐仓模式
+            'marginMode': 'cross',  # 全仓模式
         }
         
-        # Bitget 需要 marginCoin 参数（保证金币种）
+        # Bitget 全仓杠杆参数
         if client.exchange_id == 'bitget':
-            if '_' in contract:
-                _, quote = contract.split('_', 1)
-                params['marginCoin'] = quote
-            elif '/' in symbol:
-                _, quote = symbol.split('/', 1)
-                params['marginCoin'] = quote
-            else:
-                params['marginCoin'] = 'USDT'
+            params['loanType'] = 'autoLoanAndRepay'  # 自动借款（Bitget 全仓使用 autoLoan）
         
         order = None
-        filled_amount = cost_amount
+        filled_amount = 0
         
-        # 获取当前价格（买入和卖出都需要根据价格计算数量）
+        # 获取当前价格（用于计算和验证）
         ticker = client.exchange.fetch_ticker(symbol)
         if not ticker or not isinstance(ticker, dict):
             raise ValueError(f"无法获取 {contract} 的行情数据")
         
         if side == 'buy':
-            params["quoteSize"]= cost_amount
-            # 买入（做多）：按成本买入
-            # 对于 Bitget 现货杠杆，需要特殊处理
+            # 买入（做多）：使用 quoteSize（USDT 金额）下单
+            # 根据 Bitget API 文档，全仓买入使用 quoteSize 参数
             if client.exchange_id == 'bitget':
+                # Bitget 全仓买入：需要同时提供 size 和 quoteSize
+                # 根据 API 文档，size 不能为空，但可以使用 quoteSize 来指定花费的 USDT 金额
+                current_price = ticker.get('ask', 0) or ticker.get('last', 0) or ticker.get('bid', 0)
+                if current_price <= 0:
+                    raise ValueError(f"无法获取 {contract} 的有效价格")
+                
+                # 计算一个最小的 size（用于满足 API 要求，但实际使用 quoteSize）
+                # 或者直接计算 size 并设置 quoteSize
+                params['createMarketBuyOrderRequiresPrice'] = False
+                params['quoteSize'] = cost_amount  # 花费的 USDT 金额
+                
+                # 计算一个估算的 size（用于满足 API 要求）
+                estimated_size = f'{float(cost_float / current_price):.2f}'
+                params['size'] = str(cost_amount)  # Bitget 要求 size 不能为空
+                
+                logger.info(f"Bitget 全仓杠杆买入: {contract}, quoteSize={cost_amount} USDT, size={estimated_size}")
+                quoteSize =  f'{float(cost_amount):.2f}'
+
+                # Bitget 全仓买入：同时提供 size 和 quoteSize
+                # quoteSize 优先，指定花费的 USDT 金额
                 order = client.exchange.create_order(
                     symbol=symbol,
                     type='market',
                     side=side,
-                    amount=cost_amount,
+                    amount=quoteSize,  # 提供 size 以满足 API 要求
                     params=params
                 )
-
+            else:
+                # 其他交易所：尝试使用 cost 参数或计算 amount
+                try:
+                    order = client.exchange.create_order(
+                        symbol=symbol,
+                        type='market',
+                        side=side,
+                        cost=cost_float,
+                        params=params
+                    )
+                except Exception as cost_error:
+                    # 如果不支持 cost，计算 amount
+                    current_price = ticker.get('ask', 0) or ticker.get('last', 0)
+                    if current_price > 0:
+                        buy_amount = cost_float / current_price * 0.99
+                        order = client.exchange.create_order(
+                            symbol=symbol,
+                            type='market',
+                            side=side,
+                            amount=buy_amount,
+                            params=params
+                        )
+                    else:
+                        raise ValueError(f"无法获取有效价格")
         else:
-            params["baseSize"] = size
-            # 使用杠杆参数下单（做空需要杠杆支持）
-            order = client.exchange.create_order(
-                symbol=symbol,
-                type='market',
-                side=side,
-                amount=size,
-                params=params,
-            )
+            # 卖出（做空）：使用 baseSize（币数量）下单
+            # 根据 Bitget API 文档，全仓卖出使用 baseSize 参数
+            if client.exchange_id == 'bitget':
+                # Bitget 全仓卖出：使用 baseSize（币数量）
+                params['baseSize'] = size
+                logger.info(f"Bitget 全仓杠杆卖出: {contract}, baseSize={size}, marginCoin={params['marginCoin']}")
+                
+                order = client.exchange.create_order(
+                    symbol=symbol,
+                    type='market',
+                    side=side,
+                    amount=size,
+                    params=params
+                )
+            else:
+                # 其他交易所：使用 amount（币数量）
+                order = client.exchange.create_order(
+                    symbol=symbol,
+                    type='market',
+                    side=side,
+                    amount=float(size),
+                    params=params
+                )
 
         if order is None:
             raise ValueError("订单创建失败，返回 None")
@@ -885,9 +935,19 @@ def cex_spot_place(contract: str, side: str, cost: str, size: str) -> Optional[O
         if not isinstance(order, dict):
             raise ValueError(f"订单返回格式错误: {type(order)}")
         
-        # 如果 filled_amount 为 0，尝试从订单中获取实际成交数量
-        if filled_amount == 0:
-            filled_amount = order.get('filled', 0) or order.get('amount', 0)
+        # 获取实际成交数量
+        filled_amount = order.get('filled', 0) if isinstance(order, dict) else 0
+        if not filled_amount:
+            filled_amount = order.get('amount', 0) if isinstance(order, dict) else 0
+        
+        # 如果仍然为 0，使用成本金额（买入时）或 size（卖出时）
+        if not filled_amount or filled_amount == 0:
+            if side == 'buy':
+                # 买入时，尝试从订单信息中获取，或使用成本金额
+                filled_amount = cost_amount
+            else:
+                # 卖出时，使用 size
+                filled_amount = size
         
         # 安全获取订单信息
         order_id = order.get('id', '')

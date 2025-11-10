@@ -122,11 +122,11 @@ def test_account_api():
     print_section("2. 测试账户 API（需要 API 密钥）")
     
     # 检查是否配置了 API 密钥
-    api_key = os.getenv('GATE_API_KEY', '')
+    api_key = os.getenv('GATE_API_KEY', '') or os.getenv('API_KEY', '')
     if not api_key:
         print("⚠️ 未配置 API 密钥，跳过账户 API 测试")
-        print("   设置方法: export GATE_API_KEY='your_key'")
-        print("            export GATE_API_SECRET='your_secret'")
+        print("   设置方法: export API_KEY='your_key'")
+        print("            export API_SECRET='your_secret'")
         return True
     
     # 测试获取余额
@@ -162,6 +162,122 @@ def test_account_api():
     except Exception as e:
         print(f"❌ 错误: {e}")
         return False
+    
+    return True
+
+
+def test_spot_place_order(dry_run: bool = True, contract: str = "ETH_USDT", cost: str = "10", size: str = "0.01"):
+    """测试现货杠杆下单
+    
+    Args:
+        dry_run: 如果为 True，只测试参数验证，不下单
+        contract: 交易对名称
+        cost: 买入时的 USDT 成本金额
+        size: 卖出时的币数量
+    """
+    print_section("3. 测试现货杠杆下单")
+    
+    # 检查是否配置了 API 密钥
+    api_key = os.getenv('API_KEY', '') or os.getenv('BITGET_API_KEY', '')
+    if not api_key:
+        print("⚠️ 未配置 API 密钥，跳过下单测试")
+        print("   设置方法: export API_KEY='your_key'")
+        print("            export API_SECRET='your_secret'")
+        if os.getenv('EXCHANGE_ID', '').lower() in ['bitget', 'okx']:
+            print("            export API_PASSWORD='your_passphrase'")
+        return True
+    
+    if dry_run:
+        print("⚠️ 当前为 DRY RUN 模式，不会实际下单")
+        print("   要实际下单，请设置 dry_run=False")
+    
+    # 测试参数验证
+    print("\n📝 测试参数验证...")
+    try:
+        # 测试无效成本金额
+        result = rest.cex_spot_place(contract, "buy", "0", "0")
+        if result is None:
+            print("✅ 参数验证正常（无效金额被拒绝）")
+        else:
+            print("❌ 参数验证失败（应该拒绝无效金额）")
+            return False
+    except Exception as e:
+        print(f"⚠️ 参数验证测试异常: {e}")
+    
+    if dry_run:
+        print("\n⚠️ DRY RUN 模式：跳过实际下单测试")
+        print("   如果要测试实际下单，请修改代码设置 dry_run=False")
+        return True
+    
+    # 测试买入（做多）
+    print("\n📈 测试买入（做多）下单...")
+    print(f"   交易对: {contract}")
+    print(f"   成本: {cost} USDT")
+    
+    try:
+        # 获取当前价格以计算 size（用于卖出测试）
+        ticker = rest.get_cex_sticker(contract)
+        if ticker and len(ticker) > 0:
+            current_price = ticker[0].last
+            calculated_size = str(float(cost) / current_price * 0.99)  # 留1%余量
+            print(f"   当前价格: ${current_price:,.2f}")
+            print(f"   预计买入数量: {calculated_size}")
+        else:
+            calculated_size = size
+        
+        # 确认是否继续
+        print("\n⚠️ 警告：这将执行真实的交易订单！")
+        confirm = input("   确认继续？(yes/no): ").strip().lower()
+        if confirm != 'yes':
+            print("   已取消下单测试")
+            return True
+        
+        order = rest.cex_spot_place(contract, "buy", cost, calculated_size)
+        if order:
+            print(f"✅ 买入订单创建成功")
+            print(f"   订单ID: {order.id}")
+            print(f"   成交数量: {order.amount}")
+            print(f"   均价: ${order.avg_deal_price:,.2f}")
+            print(f"   状态: {order.status}")
+            print(f"   手续费: {order.fee}")
+        else:
+            print("❌ 买入订单创建失败")
+            return False
+    except Exception as e:
+        print(f"❌ 买入下单测试失败: {e}")
+        logger.error(f"买入下单测试失败: {e}", exc_info=True)
+        return False
+    
+    # 测试卖出（做空）- 可选，需要先有持仓
+    print("\n📉 测试卖出（做空）下单（可选）...")
+    print("   注意：卖出需要先有持仓或借币")
+    test_sell = input("   是否测试卖出？(yes/no): ").strip().lower()
+    
+    if test_sell == 'yes':
+        print(f"   交易对: {contract}")
+        print(f"   卖出数量: {size}")
+        
+        try:
+            confirm = input("   确认继续？(yes/no): ").strip().lower()
+            if confirm != 'yes':
+                print("   已取消卖出测试")
+                return True
+            
+            order = rest.cex_spot_place(contract, "sell", cost, size)
+            if order:
+                print(f"✅ 卖出订单创建成功")
+                print(f"   订单ID: {order.id}")
+                print(f"   成交数量: {order.amount}")
+                print(f"   均价: ${order.avg_deal_price:,.2f}")
+                print(f"   状态: {order.status}")
+                print(f"   手续费: {order.fee}")
+            else:
+                print("❌ 卖出订单创建失败")
+                return False
+        except Exception as e:
+            print(f"❌ 卖出下单测试失败: {e}")
+            logger.error(f"卖出下单测试失败: {e}", exc_info=True)
+            return False
     
     return True
 
@@ -218,6 +334,9 @@ def main():
     
     # 测试账户API
     results.append(("账户API", test_account_api()))
+    
+    # 测试现货杠杆下单（默认 DRY RUN 模式）
+    results.append(("现货杠杆下单", test_spot_place_order(dry_run=True)))
     
     # 汇总结果
     print_section("测试结果汇总")
