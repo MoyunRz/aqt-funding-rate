@@ -16,6 +16,9 @@ CCXT 交易所 API 封装模块
     API_KEY=your_api_key
     API_SECRET=your_api_secret
     USE_TESTNET=false
+    
+    # Bitget 和 OKX 需要额外的 password/passphrase
+    API_PASSWORD=your_passphrase  # 或使用 PASSPHRASE
 
 交易对格式自动转换：统一使用 BTC_USDT 格式，自动转换为交易所特定格式。
 """
@@ -111,6 +114,7 @@ class CCXTClient:
         self,
         api_key: str = None,
         api_secret: str = None,
+        password: str = None,
         use_testnet: bool = False,
         exchange_id: str = None
     ):
@@ -120,6 +124,7 @@ class CCXTClient:
         Args:
             api_key: API Key，未提供时从环境变量读取
             api_secret: API Secret，未提供时从环境变量读取
+            password: API Password/Passphrase（Bitget/OKX 需要），未提供时从环境变量读取
             use_testnet: 是否使用测试网，未提供时从环境变量读取
             exchange_id: 交易所ID，未提供时从环境变量 EXCHANGE_ID 读取（默认 gate）
         
@@ -127,6 +132,8 @@ class CCXTClient:
             1. 交易所特定配置：{EXCHANGE_ID}_API_KEY
             2. 通用配置：API_KEY
             3. 向后兼容：GATE_API_KEY
+        
+        注意：Bitget 和 OKX 需要额外的 password/passphrase 参数
         """
         # 从环境变量加载交易所ID（如果未提供）
         if exchange_id is None:
@@ -146,23 +153,28 @@ class CCXTClient:
         # 优先级：交易所特定配置 > 通用配置 > 向后兼容配置
         if api_key is None:
             # 1. 尝试交易所特定的环境变量
-            exchange_specific_key = os.getenv(f'API_KEY', '')
-            exchange_specific_secret = os.getenv(f'API_SECRET', '')
+            exchange_specific_key = os.getenv(f'{exchange_id.upper()}_API_KEY', '')
+            exchange_specific_secret = os.getenv(f'{exchange_id.upper()}_API_SECRET', '')
+            exchange_specific_password = os.getenv(f'{exchange_id.upper()}_API_PASSWORD', '') or os.getenv(f'{exchange_id.upper()}_PASSPHRASE', '')
             
             # 2. 尝试通用环境变量（API_KEY, API_SECRET）
             generic_key = os.getenv('API_KEY', '')
             generic_secret = os.getenv('API_SECRET', '')
+            generic_password = os.getenv('API_PASSWORD', '') or os.getenv('PASSPHRASE', '')
             
             # 3. 尝试向后兼容的环境变量（GATE_API_KEY）
-            legacy_key = os.getenv('API_KEY', '')
-            legacy_secret = os.getenv('API_SECRET', '')
+            legacy_key = os.getenv('GATE_API_KEY', '')
+            legacy_secret = os.getenv('GATE_API_SECRET', '')
+            legacy_password = os.getenv('GATE_API_PASSWORD', '') or os.getenv('GATE_PASSPHRASE', '')
             
             # 按优先级选择
             self.api_key = (exchange_specific_key or generic_key or legacy_key)
             self.api_secret = (exchange_specific_secret or generic_secret or legacy_secret)
+            self.api_password = (exchange_specific_password or generic_password or legacy_password)
         else:
             self.api_key = api_key
             self.api_secret = api_secret
+            self.api_password = password or os.getenv('API_PASSWORD', '') or os.getenv('PASSPHRASE', '')
 
         # 测试网配置（支持交易所特定配置）
         if use_testnet is False:
@@ -189,6 +201,13 @@ class CCXTClient:
             'enableRateLimit': True,  # 启用速率限制
             'timeout': 30000,  # 30秒超时
         }
+        
+        # Bitget 和 OKX 需要 password/passphrase
+        if exchange_id in ['bitget', 'okx']:
+            if self.api_password:
+                exchange_options['password'] = self.api_password
+            else:
+                logger.warning(f"{exchange_id.upper()} 需要 API_PASSWORD 或 PASSPHRASE 参数，某些功能可能无法使用")
         
         # 交易所特定的配置
         if exchange_id in ['gate', 'bitget', 'okx', 'bybit']:
@@ -248,10 +267,10 @@ def get_ccxt_client() -> CCXTClient:
     return _ccxt_client
 
 
-def init_ccxt_client(api_key: str = None, api_secret: str = None, use_testnet: bool = False) -> CCXTClient:
+def init_ccxt_client(api_key: str = None, api_secret: str = None, password: str = None, use_testnet: bool = False) -> CCXTClient:
     """初始化 CCXT 客户端"""
     global _ccxt_client
-    _ccxt_client = CCXTClient(api_key, api_secret, use_testnet)
+    _ccxt_client = CCXTClient(api_key, api_secret, password, use_testnet)
     return _ccxt_client
 
 

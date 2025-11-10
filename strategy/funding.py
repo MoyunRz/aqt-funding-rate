@@ -43,32 +43,29 @@ mp = {}
 def watch_filter_funding():
     """筛选高资金费率的合约，返回最优套利机会"""
     logger.info("正在获取合约列表...")
-    r = get_cex_contracts()
-    if r is None or len(r) == 0:
+    contracts = get_cex_contracts()
+    if contracts is None or len(contracts) == 0:
         logger.warning("无法获取合约列表")
         return
-    logger.info(f"获取到 {len(r)} 个合约")
+    logger.info(f"获取到 {len(contracts)} 个合约")
     
     global mp
     flist = []
     
-    for v in r:
-        if v.name == "MERL_USDT":
-            continue
-        
+    for v in contracts:
+
         funding_rate = float(v.funding_rate) * 100.0
         
-        if funding_rate >= 0.6 or funding_rate <= -0.6:
-            print(v.name)
+        if funding_rate >= 0.1 or funding_rate <= -0.1:
             candle = mp.get(v.name)
             if candle is None:
                 sticker = get_cex_spot_candle(v.name, "1m", 1)
                 if sticker is None or len(sticker) == 0:
-                    time.sleep(1)
                     continue
                 mp[v.name] = v
                 flist.append(v)
                 logger.info(f"{v.name} 资金费率(%): {funding_rate}")
+                time.sleep(1)
             else:
                 flist.append(v)
 
