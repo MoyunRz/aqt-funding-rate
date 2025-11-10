@@ -92,11 +92,9 @@ def watch_history_funding():
     item = watch_filter_funding()
     if item is None:
         return
-    
     current_timestamp = int(time.time())
     time_in_interval = current_timestamp % item.funding_interval
-    
-    if time_in_interval > (item.funding_interval - 10):
+    if True:
         fticker = get_cex_fticker(item.name)
         if fticker is None or len(fticker) == 0:
             logger.warning(f"无法获取 {item.name} 的合约行情数据")
@@ -120,32 +118,25 @@ def watch_history_funding():
         
         wallet_margin = wallet.details["spot"]
         spot_amount = float(wallet_margin.amount)
-        
+        logger.info(f"{item.name} 可用余额: {spot_amount} 需要: {balance * 2}")
         if spot_amount >= balance * 2:
+
             set_cex_margin_leverage(item.name, lever)
             set_cex_leverage(item.name, lever)
-            
             funding_rate = float(item.funding_rate) * 100.0
             if funding_rate > 0:
-                size = int(float(balance) / float(f_bid))
-                csz = 1.0 / float(item.quanto_multiplier) * size
-                
-                if csz < 1:
-                    return
-                
-                size = float(s_ask) * size * 1.01
-                open_order(item.name, size, int(-csz))
+                logger.info(f"{item}")
+                size = float(balance) / float(f_bid)
+                # 做空
+                open_order(item.name,float(-size))
             else:
-                size = int(float(balance) / float(f_ask))
-                csz = 1.0 / float(item.quanto_multiplier) * size
-                
-                if csz < 1:
-                    return
-                open_order(item.name, size, int(csz))
+                size = float(balance) / float(f_ask)
+                # 做多
+                open_order(item.name, size)
 
-
-def open_order(name: str, size: float, csz: int):
+def open_order(name: str, size: float):
     """执行对冲开仓：同时开启合约和现货仓位"""
+    logger.info("执行对冲开仓：同时开启合约和现货仓位")
     psList = get_cex_position(name)
     if psList is not None and psList.size != 0:
         logger.warning(f"{name} 已经有持仓")
@@ -155,32 +146,45 @@ def open_order(name: str, size: float, csz: int):
     set_cex_unified_leverage(name_list[0], lever)
     set_cex_leverage(name, lever)
     
-    if csz > 0:
-        res = cex_futures_place(name, "0", csz)
+    # 获取现货价格以计算买入金额
+    sticker = get_cex_sticker(name)
+    if sticker is None or len(sticker) == 0:
+        logger.error(f"无法获取 {name} 的现货行情，无法计算买入金额")
+        return
+    
+    s_ask = sticker[0].lowest_ask
+    
+    if size > 0:
+        # 做多：合约做多 + 现货做空
+        res = cex_futures_place(name, float(size))
         if res is None:
             logger.error(f"合约下单失败: {name}")
             return
 
         if res.id != "":
-            res1 = cex_spot_place(name, "sell", str(size))
+            # 现货做空：卖出币的数量
+            sell_amount = abs(size) * 1.00035
+            res1 = cex_spot_place(name, "sell",str(balance), str(sell_amount))
             if res1 is None or res1 == "":
                 logger.error("现货开空失败")
                 cex_futures_close_position(name)
                 return
-            time.sleep(30)
+            time.sleep(10)
     else:
-        res = cex_futures_place(name, "0", csz)
+        # 做空：合约做空 + 现货做多
+        res = cex_futures_place(name, -float(size))
         if res is None:
             logger.error(f"合约下单失败: {name}")
             return
-
         if res.id != "":
-            res1 = cex_spot_place(name, "buy", str(size))
+            # 现货做多：需要计算买入金额（币数量 * 价格 * 1.01）
+            buy_amount = abs(size) * 1.00035
+            res1 = cex_spot_place(name, "buy",str(balance), str(buy_amount))
             if res1 is None or res1 == "":
                 logger.error("现货开多失败")
                 cex_futures_close_position(name)
                 return
-            time.sleep(30)
+            time.sleep(10)
 
 def watch_position():
     """监控持仓并在盈利时自动平仓"""
