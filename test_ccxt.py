@@ -14,6 +14,7 @@ os.environ['USE_CCXT'] = 'true'
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# 现在 rest 模块已经从 ccxt_client 导入所有函数
 import rest
 from rest.ccxt_client import get_ccxt_client
 from utils.logger_config import LoggerConfig, get_logger

@@ -157,6 +157,7 @@ class CCXTClient:
             'apiKey': self.api_key,
             'secret': self.api_secret,
             'enableRateLimit': True,  # 启用速率限制
+            'timeout': 30000,  # 30秒超时
             'options': {
                 'defaultType': 'swap',  # 默认使用永续合约
                 'defaultSettle': 'usdt',  # 默认USDT结算
@@ -213,9 +214,16 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
     """
     try:
         client = get_ccxt_client()
+        
+        # 加载市场数据（带进度提示）
+        logger.info("正在加载市场数据，这可能需要一些时间...")
         markets = client.exchange.load_markets()
+        logger.info(f"✅ 已加载 {len(markets)} 个市场")
         
         contracts = []
+        swap_markets = []
+        
+        # 第一步：筛选出所有永续合约
         for symbol, market in markets.items():
             # 只获取永续合约（swap）
             if market.get('type') != 'swap':
@@ -226,8 +234,19 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
                 continue
             
             # 如果指定了合约名称，进行筛选
-            if contract and symbol != contract:
-                continue
+            if contract:
+                symbol_normalized = symbol.replace('/', '_').replace(':USDT', '')
+                if symbol_normalized != contract:
+                    continue
+            
+            swap_markets.append((symbol, market))
+        
+        logger.info(f"找到 {len(swap_markets)} 个 USDT 永续合约，正在获取资金费率...")
+        
+        # 第二步：批量获取资金费率（减少API调用）
+        for idx, (symbol, market) in enumerate(swap_markets):
+            if idx > 0 and idx % 10 == 0:
+                logger.info(f"已处理 {idx}/{len(swap_markets)} 个合约...")
             
             # 获取资金费率
             try:
@@ -242,12 +261,18 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
                 contract_size = market.get('contractSize', 1)
                 quanto_multiplier = 1.0 / contract_size if contract_size > 0 else 1.0
                 
-                # 获取标记价格
-                ticker = client.exchange.fetch_ticker(symbol)
-                mark_price = ticker.get('last', 0)
+                # 获取标记价格（使用市场数据中的价格，避免额外API调用）
+                mark_price = market.get('info', {}).get('mark_price', 0)
+                if not mark_price:
+                    # 如果市场数据中没有，再调用API
+                    try:
+                        ticker = client.exchange.fetch_ticker(symbol)
+                        mark_price = ticker.get('last', 0)
+                    except:
+                        mark_price = 0
                 
                 contracts.append(Contract(
-                    name=symbol.replace('/', '_'),  # BTC/USDT:USDT -> BTC_USDT
+                    name=symbol.replace('/', '_').replace(':USDT', ''),  # BTC/USDT:USDT -> BTC_USDT
                     funding_rate=funding_rate,
                     funding_interval=funding_interval,
                     quanto_multiplier=quanto_multiplier,
@@ -258,10 +283,11 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
                 logger.debug(f"跳过合约 {symbol}: {e}")
                 continue
         
+        logger.info(f"✅ 成功获取 {len(contracts)} 个合约信息")
         return contracts if contracts else None
         
     except Exception as e:
-        logger.error(f"❌ 获取合约列表失败: {e}")
+        logger.error(f"❌ 获取合约列表失败: {e}", exc_info=True)
         return None
 
 
@@ -643,13 +669,13 @@ def cex_spot_place(contract: str, side: str, amount: str) -> Optional[OrderInfo]
 
 def find_cex_spot_orders(contract: str) -> Optional[List[OrderInfo]]:
     """
-    查询现货订单历史
+    查询现货订单历史（仅返回已完成的订单）
     
     Args:
         contract: 交易对名称（如 BTC_USDT）
     
     Returns:
-        订单列表或 None
+        订单列表或 None（仅包含状态为 'closed' 的已完成订单）
     """
     try:
         client = get_ccxt_client()
@@ -662,6 +688,12 @@ def find_cex_spot_orders(contract: str) -> Optional[List[OrderInfo]]:
         
         result = []
         for order in orders:
+            # CCXT 订单状态：'open', 'closed', 'canceled'
+            # 统一转换为 'closed' 表示已完成，与 rest.py 的 'finished' 对应
+            order_status = order.get('status', '')
+            if order_status not in ['closed', 'filled']:
+                continue  # 只返回已完成的订单
+            
             result.append(OrderInfo(
                 id=str(order['id']),
                 symbol=contract,
@@ -669,7 +701,7 @@ def find_cex_spot_orders(contract: str) -> Optional[List[OrderInfo]]:
                 amount=order['amount'],
                 price=order.get('price', 0),
                 avg_deal_price=order.get('average', 0),
-                status=order['status'],
+                status='closed',  # 统一状态为 'closed'，与 funding.py 中的检查一致
                 fee=order.get('fee', {}).get('cost', 0),
                 update_time_ms=order.get('timestamp', 0)
             ))

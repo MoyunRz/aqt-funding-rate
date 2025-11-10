@@ -1,7 +1,7 @@
 # ==================== 程序入口 ====================
 import os
 
-from strategy.gate_funding import run_funding
+from strategy.funding import run_funding
 from dotenv import load_dotenv
 
 load_dotenv()
