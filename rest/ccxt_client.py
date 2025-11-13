@@ -20,7 +20,7 @@ CCXT 交易所 API 封装模块
     # Bitget 和 OKX 需要额外的 password/passphrase
     API_PASSWORD=your_passphrase  # 或使用 PASSPHRASE
 
-交易对格式自动转换：统一使用 BTC_USDT 格式，自动转换为交易所特定格式。
+交易对格式：统一使用 CCXT 标准格式（如 BTC/USDT:USDT 用于永续合约，BTC/USDT 用于现货）。
 """
 
 import os
@@ -274,62 +274,70 @@ def init_ccxt_client(api_key: str = None, api_secret: str = None, password: str 
     return _ccxt_client
 
 
-def normalize_contract_name(contract: str, exchange_id: str = None, is_spot: bool = False) -> str:
-    """
-    将统一格式的合约名称转换为交易所特定格式
-    
-    Args:
-        contract: 统一格式，如 "BTC_USDT"
-        exchange_id: 交易所ID，None时从客户端获取
-        is_spot: 是否为现货交易
-    
-    Returns:
-        交易所特定的交易对格式
-    """
-    if exchange_id is None:
-        client = get_ccxt_client()
-        exchange_id = client.exchange_id
-    
-    # 统一格式: BTC_USDT
-    if '_' in contract:
-        base, quote = contract.split('_', 1)
-    else:
-        # 如果已经是其他格式，尝试解析
-        base = contract.replace('USDT', '').replace('USD', '')
-        quote = 'USDT'
-    
-    # 现货交易格式（大部分交易所都是 BTC/USDT）
-    if is_spot:
-        if exchange_id == 'huobi':
-            return f"{base}-{quote}"
-        else:
-            return f"{base}/{quote}"
-    
-    # 合约交易格式
-    if exchange_id in ['gate', 'bitget', 'okx', 'bybit']:
-        # Gate.io, Bitget, OKX, Bybit: BTC/USDT:USDT
-        return f"{base}/{quote}:USDT"
-    elif exchange_id == 'binance':
-        # Binance: BTC/USDT:USDT
-        return f"{base}/{quote}:USDT"
-    elif exchange_id == 'huobi':
-        # Huobi: BTC-USDT
-        return f"{base}-{quote}"
-    else:
-        # 默认格式
-        return f"{base}/{quote}:USDT"
-
-
-def denormalize_contract_name(symbol: str) -> str:
-    """将交易所特定的交易对格式转换为统一格式（BTC_USDT）"""
-    symbol = symbol.split(':')[0]
-    return symbol.replace('/', '_').replace('-', '_')
-
-
 def get_exchange_id() -> str:
     """获取当前使用的交易所ID"""
     client = get_ccxt_client()
     return client.exchange_id
+
+
+def extract_quote_currency(symbol: str) -> str:
+    """
+    从 CCXT 标准格式的交易对中提取 quote currency（计价货币）
+    
+    Args:
+        symbol: CCXT 格式的交易对（如 BTC/USDT:USDT 或 BTC/USDT）
+    
+    Returns:
+        quote currency（如 USDT）
+    
+    示例:
+        extract_quote_currency("BTC/USDT:USDT") -> "USDT"
+        extract_quote_currency("BTC/USDT") -> "USDT"
+        extract_quote_currency("ETH/BTC") -> "BTC"
+    """
+    # CCXT 格式：BASE/QUOTE 或 BASE/QUOTE:SETTLE
+    if '/' in symbol:
+        # 移除结算货币部分（如果有）
+        parts = symbol.split(':')
+        base_quote = parts[0]
+        quote = base_quote.split('/')[1] if '/' in base_quote else 'USDT'
+        return quote
+    else:
+        # 如果不是标准格式，返回默认值
+        logger.warning(f"交易对格式不符合 CCXT 标准: {symbol}，使用默认值 USDT")
+        return 'USDT'
+
+
+def normalize_spot_symbol(symbol: str) -> str:
+    """
+    将交易对格式规范化为现货格式（移除结算货币部分）
+    
+    CCXT 格式说明：
+    - 永续合约：BTC/USDT:USDT（包含结算货币）
+    - 现货：BTC/USDT（不包含结算货币）
+    
+    Args:
+        symbol: 交易对名称（可能是合约格式或现货格式）
+    
+    Returns:
+        规范化的现货交易对格式
+    
+    示例:
+        normalize_spot_symbol("BTC/USDT:USDT") -> "BTC/USDT"
+        normalize_spot_symbol("ETH/USDT") -> "ETH/USDT"
+        normalize_spot_symbol("BTC_USDT") -> "BTC/USDT" (兼容旧格式)
+    """
+    # 如果是旧格式（下划线分隔），先转换为标准格式
+    if '_' in symbol and '/' not in symbol:
+        symbol = symbol.replace('_', '/')
+        logger.debug(f"转换旧格式交易对: {symbol}")
+    
+    # 移除结算货币部分（:SETTLE）
+    if ':' in symbol:
+        symbol = symbol.split(':')[0]
+        logger.debug(f"移除结算货币部分，现货格式: {symbol}")
+    
+    return symbol
 
 
 def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
@@ -350,7 +358,7 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
                 continue
             
             if contract:
-                if denormalize_contract_name(symbol) != contract:
+                if symbol != contract:
                     continue
             
             swap_markets.append((symbol, market))
@@ -378,7 +386,7 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
                         mark_price = 0
                 
                 contracts.append(Contract(
-                    name=denormalize_contract_name(symbol),  # BTC/USDT:USDT -> BTC_USDT
+                    name=symbol,  # CCXT 标准格式：BTC/USDT:USDT
                     funding_rate=funding_rate,
                     funding_interval=funding_interval,
                     quanto_multiplier=quanto_multiplier,
@@ -401,8 +409,7 @@ def get_cex_fticker(contract: str) -> Optional[List[Ticker]]:
     """获取合约行情"""
     try:
         client = get_ccxt_client()
-        symbol = normalize_contract_name(contract, client.exchange_id)
-        ticker = client.exchange.fetch_ticker(symbol)
+        ticker = client.exchange.fetch_ticker(contract)
         
         return [Ticker(
             symbol=contract,
@@ -426,7 +433,7 @@ def cex_futures_place(contract: str, cost: float, price: str="0") -> Optional[Or
     对于 Bitget 等交易所，amount 参数直接表示 USDT 价值。
     
     Args:
-        contract: 交易对名称（如 BTC_USDT）
+        contract: 交易对名称（CCXT 格式，如 BTC/USDT:USDT）
         cost: USDT 成本金额，正数表示做多，负数表示做空
         price: 价格（未使用，保留兼容性）
     
@@ -435,8 +442,6 @@ def cex_futures_place(contract: str, cost: float, price: str="0") -> Optional[Or
     """
     try:
         client = get_ccxt_client()
-        symbol = normalize_contract_name(contract, client.exchange_id)
-        
         # 判断方向：cost > 0 表示做多，cost < 0 表示做空
         side = 'buy' if cost > 0 else 'sell'
         cost_amount = abs(cost)
@@ -451,7 +456,7 @@ def cex_futures_place(contract: str, cost: float, price: str="0") -> Optional[Or
         try:
             logger.info(f"尝试使用 cost 参数下单: {contract}, 成本={cost_amount} USDT, 方向={side}")
             order = client.exchange.create_order(
-                symbol=symbol,
+                symbol=contract,
                 type='market',
                 side=side,
                 cost=cost_amount,
@@ -470,7 +475,7 @@ def cex_futures_place(contract: str, cost: float, price: str="0") -> Optional[Or
                     # Bitget 的 amount 就是 USDT 价值
                     logger.info(f"Bitget 按 USDT 价值下单: {contract}, 价值={cost_amount} USDT, 方向={side}")
                     order = client.exchange.create_order(
-                        symbol=symbol,
+                        symbol=contract,
                         type='market',
                         side=side,
                         amount=cost_amount,
@@ -481,7 +486,7 @@ def cex_futures_place(contract: str, cost: float, price: str="0") -> Optional[Or
                     logger.info(f"按 USDT 价值下单: {contract}, 价值={cost_amount} USDT, 方向={side}")
                     try:
                         order = client.exchange.create_order(
-                            symbol=symbol,
+                            symbol=contract,
                             type='market',
                             side=side,
                             amount=cost_amount,
@@ -539,20 +544,17 @@ def cex_futures_close_position(contract: str) -> bool:
     """平掉合约仓位"""
     try:
         client = get_ccxt_client()
-        
-        # 转换合约名称格式为交易所特定格式
-        symbol = normalize_contract_name(contract, client.exchange_id)
-        
+
         # 获取当前持仓
         try:
-            positions = client.exchange.fetch_positions([symbol])
+            positions = client.exchange.fetch_positions([contract])
         except Exception as pos_error:
             # 如果获取持仓失败，尝试获取所有持仓
             logger.debug(f"获取指定合约持仓失败，尝试获取所有持仓: {pos_error}")
             try:
                 positions = client.exchange.fetch_positions()
                 # 过滤出指定合约的持仓
-                positions = [p for p in positions if isinstance(p, dict) and p.get('symbol') == symbol]
+                positions = [p for p in positions if isinstance(p, dict) and p.get('symbol') == contract]
             except Exception as all_pos_error:
                 logger.warning(f"获取持仓失败: {all_pos_error}")
                 positions = []
@@ -584,7 +586,7 @@ def cex_futures_close_position(contract: str) -> bool:
                 # Bitget 可能需要使用 close_position 方法
                 try:
                     client.exchange.create_order(
-                        symbol=symbol,
+                        symbol=contract,
                         type='market',
                         side=side,
                         amount=amount,
@@ -599,7 +601,7 @@ def cex_futures_close_position(contract: str) -> bool:
                         raise bitget_error
             else:
                 client.exchange.create_order(
-                    symbol=symbol,
+                    symbol=contract,
                     type='market',
                     side=side,
                     amount=amount,
@@ -629,11 +631,7 @@ def get_cex_position(contract: str) -> Optional[Position]:
     """获取合约持仓"""
     try:
         client = get_ccxt_client()
-        
-        # 转换合约名称格式为交易所特定格式
-        symbol = normalize_contract_name(contract, client.exchange_id)
-        
-        positions = client.exchange.fetch_positions([symbol])
+        positions = client.exchange.fetch_positions([contract])
         
         for position in positions:
             contracts = position.get('contracts', 0)
@@ -681,7 +679,7 @@ def get_cex_all_position() -> Optional[List[Position]]:
             
             symbol = position.get('symbol', '')
             # 转换格式为统一格式
-            contract_name = denormalize_contract_name(symbol)
+            contract_name = symbol
             
             result.append(Position(
                 contract=contract_name,
@@ -706,9 +704,8 @@ def set_cex_leverage(contract: str, leverage: str) -> bool:
         client = get_ccxt_client()
         
         # 转换合约名称格式为交易所特定格式
-        symbol = normalize_contract_name(contract, client.exchange_id)
-        
-        client.exchange.set_leverage(int(leverage), symbol)
+
+        client.exchange.set_leverage(int(leverage), contract)
         logger.info(f"设置杠杆成功: {contract} -> {leverage}x")
         return True
         
@@ -763,11 +760,9 @@ def get_cex_sticker(contract: str) -> Optional[List[Ticker]]:
     """获取现货行情"""
     try:
         client = get_ccxt_client()
-        
-        # 转换格式为交易所特定格式（现货）
-        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
-        
-        ticker = client.exchange.fetch_ticker(symbol)
+        # 规范化现货交易对格式
+        contract = normalize_spot_symbol(contract)
+        ticker = client.exchange.fetch_ticker(contract)
         
         return [Ticker(
             symbol=contract,
@@ -788,15 +783,11 @@ def get_cex_spot_candle(contract: str, interval: str = "1m", limit: int = 100) -
     """获取现货K线数据"""
     try:
         client = get_ccxt_client()
-        
-        # 转换格式为交易所特定格式（现货）
-        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
-        
+        # 规范化现货交易对格式
+        contract = normalize_spot_symbol(contract)
         # 获取OHLCV数据
-        ohlcv = client.exchange.fetch_ohlcv(symbol, timeframe=interval, limit=limit)
-        
+        ohlcv = client.exchange.fetch_ohlcv(contract, timeframe=interval, limit=limit)
         return ohlcv if ohlcv else None
-        
     except Exception as e:
         logger.error(f"获取K线数据失败 {contract}: {e}")
         return None
@@ -810,7 +801,7 @@ def cex_spot_place(contract: str, side: str, cost: str, size: str) -> Optional[O
     - 卖出（做空）：卖出价值 cost USDT 的币（使用杠杆做空）
     
     Args:
-        contract: 交易对名称（如 BTC_USDT）
+        contract: 交易对名称（CCXT 格式，如 BTC/USDT，会自动规范化）
         side: 交易方向，'buy'（做多）或 'sell'（做空）
         cost: USDT 成本金额（字符串格式）
     
@@ -820,8 +811,8 @@ def cex_spot_place(contract: str, side: str, cost: str, size: str) -> Optional[O
     try:
         client = get_ccxt_client()
         
-        # 转换格式为交易所特定格式（现货杠杆使用 margin 市场类型）
-        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
+        # 规范化现货交易对格式（移除结算货币部分）
+        contract = normalize_spot_symbol(contract)
         
         # 验证成本金额
         cost_float = float(cost)
@@ -845,7 +836,7 @@ def cex_spot_place(contract: str, side: str, cost: str, size: str) -> Optional[O
         filled_amount = 0
         
         # 获取当前价格（用于计算和验证）
-        ticker = client.exchange.fetch_ticker(symbol)
+        ticker = client.exchange.fetch_ticker(contract)
         if not ticker or not isinstance(ticker, dict):
             raise ValueError(f"无法获取 {contract} 的行情数据")
         
@@ -874,7 +865,7 @@ def cex_spot_place(contract: str, side: str, cost: str, size: str) -> Optional[O
                 # Bitget 全仓买入：同时提供 size 和 quoteSize
                 # quoteSize 优先，指定花费的 USDT 金额
                 order = client.exchange.create_order(
-                    symbol=symbol,
+                    symbol=contract,
                     type='market',
                     side=side,
                     amount=quoteSize,  # 提供 size 以满足 API 要求
@@ -884,7 +875,7 @@ def cex_spot_place(contract: str, side: str, cost: str, size: str) -> Optional[O
                 # 其他交易所：尝试使用 cost 参数或计算 amount
                 try:
                     order = client.exchange.create_order(
-                        symbol=symbol,
+                        symbol=contract,
                         type='market',
                         side=side,
                         cost=cost_float,
@@ -896,7 +887,7 @@ def cex_spot_place(contract: str, side: str, cost: str, size: str) -> Optional[O
                     if current_price > 0:
                         buy_amount = cost_float / current_price * 0.99
                         order = client.exchange.create_order(
-                            symbol=symbol,
+                            symbol=contract,
                             type='market',
                             side=side,
                             amount=buy_amount,
@@ -913,7 +904,7 @@ def cex_spot_place(contract: str, side: str, cost: str, size: str) -> Optional[O
                 logger.info(f"Bitget 全仓杠杆卖出: {contract}, baseSize={size}, marginCoin={params['marginCoin']}")
                 
                 order = client.exchange.create_order(
-                    symbol=symbol,
+                    symbol=contract,
                     type='market',
                     side=side,
                     amount=size,
@@ -922,7 +913,7 @@ def cex_spot_place(contract: str, side: str, cost: str, size: str) -> Optional[O
             else:
                 # 其他交易所：使用 amount（币数量）
                 order = client.exchange.create_order(
-                    symbol=symbol,
+                    symbol=contract,
                     type='market',
                     side=side,
                     amount=float(size),
@@ -987,7 +978,7 @@ def cex_spot_close_position(contract: str) -> bool:
     - 做空持仓（借币卖出的）：买入平仓
     
     Args:
-        contract: 交易对名称（如 BTC_USDT）
+        contract: 交易对名称（CCXT 格式，如 BTC/USDT，会自动规范化）
     
     Returns:
         bool: 平仓成功返回 True，失败返回 False
@@ -995,8 +986,8 @@ def cex_spot_close_position(contract: str) -> bool:
     try:
         client = get_ccxt_client()
         
-        # 转换格式为交易所特定格式（现货）
-        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
+        # 规范化现货交易对格式
+        contract = normalize_spot_symbol(contract)
         
         # 现货杠杆平仓参数
         params = {
@@ -1006,21 +997,14 @@ def cex_spot_close_position(contract: str) -> bool:
         
         # Bitget 需要 marginCoin 参数
         if client.exchange_id == 'bitget':
-            if '_' in contract:
-                _, quote = contract.split('_', 1)
-                params['marginCoin'] = quote
-            elif '/' in symbol:
-                _, quote = symbol.split('/', 1)
-                params['marginCoin'] = quote
-            else:
-                params['marginCoin'] = 'USDT'
+            params['marginCoin'] = extract_quote_currency(contract)
         
         # 获取现货杠杆持仓
         # 注意：某些交易所可能需要使用 fetch_balance 或 fetch_positions 来获取杠杆持仓
         positions = []
         try:
             # 尝试获取 margin 持仓
-            positions = client.exchange.fetch_positions([symbol])
+            positions = client.exchange.fetch_positions([contract])
             # 过滤出 margin 持仓
             positions = [p for p in positions if isinstance(p, dict) and 
                         (p.get('marginMode') == 'isolated' or p.get('type') == 'margin')]
@@ -1031,7 +1015,12 @@ def cex_spot_close_position(contract: str) -> bool:
                 balance = client.exchange.fetch_balance({'type': 'margin'})
                 if balance and isinstance(balance, dict):
                     # 从余额中提取持仓信息
-                    base_currency = symbol.split('/')[0] if '/' in symbol else contract.split('_')[0]
+                    # CCXT 格式：BASE/QUOTE 或 BASE/QUOTE:SETTLE
+                    if '/' in contract:
+                        base_currency = contract.split('/')[0].split(':')[0]
+                    else:
+                        logger.warning(f"交易对格式不符合 CCXT 标准: {contract}")
+                        base_currency = contract
                     if base_currency in balance:
                         base_balance = balance[base_currency]
                         if isinstance(base_balance, dict):
@@ -1045,7 +1034,7 @@ def cex_spot_close_position(contract: str) -> bool:
                                 if borrowed > 0:
                                     # 做空持仓：借币卖出，需要买入还币
                                     positions.append({
-                                        'symbol': symbol,
+                                        'symbol': contract,
                                         'side': 'short',
                                         'contracts': borrowed,
                                         'marginMode': 'isolated'
@@ -1053,7 +1042,7 @@ def cex_spot_close_position(contract: str) -> bool:
                                 if free > 0:
                                     # 做多持仓：买入的币，需要卖出平仓
                                     positions.append({
-                                        'symbol': symbol,
+                                        'symbol': contract,
                                         'side': 'long',
                                         'contracts': free,
                                         'marginMode': 'isolated'
@@ -1095,7 +1084,7 @@ def cex_spot_close_position(contract: str) -> bool:
             
             # 获取当前价格以计算买入成本（如果是买入还币）
             if side == 'buy':
-                ticker = client.exchange.fetch_ticker(symbol)
+                ticker = client.exchange.fetch_ticker(contract)
                 if not ticker or not isinstance(ticker, dict):
                     raise ValueError(f"无法获取 {contract} 的行情数据")
                 
@@ -1109,7 +1098,7 @@ def cex_spot_close_position(contract: str) -> bool:
                 # 尝试使用 cost 参数买入
                 try:
                     order = client.exchange.create_order(
-                        symbol=symbol,
+                        symbol=contract,
                         type='market',
                         side=side,
                         cost=buy_cost,
@@ -1121,7 +1110,7 @@ def cex_spot_close_position(contract: str) -> bool:
                     if 'unexpected keyword argument' in error_msg and 'cost' in error_msg:
                         # 不支持 cost 参数，使用 amount
                         order = client.exchange.create_order(
-                            symbol=symbol,
+                            symbol=contract,
                             type='market',
                             side=side,
                             amount=amount * 1.01,  # 稍微多买一点
@@ -1132,7 +1121,7 @@ def cex_spot_close_position(contract: str) -> bool:
             else:
                 # 卖出平仓
                 order = client.exchange.create_order(
-                    symbol=symbol,
+                    symbol=contract,
                     type='market',
                     side=side,
                     amount=amount,
@@ -1161,8 +1150,9 @@ def find_cex_spot_orders(contract: str) -> Optional[List[OrderInfo]]:
     """查询现货订单历史（优先返回已完成的订单，如果没有则返回开放订单）"""
     try:
         client = get_ccxt_client()
-        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
-        
+        # 规范化现货交易对格式
+        contract = normalize_spot_symbol(contract)
+
         all_orders = []
         closed_orders = []
         open_orders = []
@@ -1171,14 +1161,14 @@ def find_cex_spot_orders(contract: str) -> Optional[List[OrderInfo]]:
         if client.exchange_id == 'bitget':
             # 1. 尝试获取已完成的订单
             try:
-                closed_orders = client.exchange.fetch_closed_orders(symbol, limit=50)
+                closed_orders = client.exchange.fetch_closed_orders(contract, limit=50)
                 logger.debug(f"Bitget 获取到 {len(closed_orders) if closed_orders else 0} 个已完成订单")
             except Exception as closed_error:
                 logger.debug(f"Bitget fetch_closed_orders 失败: {closed_error}")
             
             # 2. 尝试获取开放订单
             try:
-                open_orders = client.exchange.fetch_open_orders(symbol, limit=50)
+                open_orders = client.exchange.fetch_open_orders(contract, limit=50)
                 logger.debug(f"Bitget 获取到 {len(open_orders) if open_orders else 0} 个开放订单")
             except Exception as open_error:
                 logger.debug(f"Bitget fetch_open_orders 失败: {open_error}")
@@ -1192,21 +1182,21 @@ def find_cex_spot_orders(contract: str) -> Optional[List[OrderInfo]]:
         else:
             # 其他交易所：尝试使用 fetch_orders，如果不支持则使用 fetchClosedOrders + fetchOpenOrders
             try:
-                all_orders = client.exchange.fetch_orders(symbol, limit=50)
+                all_orders = client.exchange.fetch_orders(contract, limit=50)
             except Exception as fetch_orders_error:
                 error_msg = str(fetch_orders_error).lower()
                 if 'not supported' in error_msg or 'fetchorders' in error_msg.lower():
                     # 如果不支持 fetch_orders，分别获取已完成和开放订单
                     logger.debug(f"交易所不支持 fetch_orders，分别获取已完成和开放订单: {fetch_orders_error}")
                     try:
-                        closed_orders = client.exchange.fetch_closed_orders(symbol, limit=50)
+                        closed_orders = client.exchange.fetch_closed_orders(contract, limit=50)
                         if closed_orders:
                             all_orders.extend(closed_orders)
                     except Exception as closed_error:
                         logger.debug(f"fetch_closed_orders 失败: {closed_error}")
                     
                     try:
-                        open_orders = client.exchange.fetch_open_orders(symbol, limit=50)
+                        open_orders = client.exchange.fetch_open_orders(contract, limit=50)
                         if open_orders:
                             all_orders.extend(open_orders)
                     except Exception as open_error:
@@ -1277,29 +1267,18 @@ def set_cex_margin_leverage(contract: str, leverage: str) -> bool:
     try:
         client = get_ccxt_client()
         
-        # 转换格式为交易所特定格式（现货）
-        symbol = normalize_contract_name(contract, client.exchange_id, is_spot=True)
+        # 规范化现货交易对格式
+        contract = normalize_spot_symbol(contract)
         
         # 准备参数
         params = {'marginMode': 'isolated'}
         
         # Bitget 需要 marginCoin 参数（保证金币种）
         if client.exchange_id == 'bitget':
-            # 从合约名称中提取 quote currency（如 ETH_USDT -> USDT）
-            if '_' in contract:
-                _, quote = contract.split('_', 1)
-                params['marginCoin'] = quote
-            else:
-                # 如果格式不对，尝试从 symbol 中提取
-                if '/' in symbol:
-                    _, quote = symbol.split('/', 1)
-                    params['marginCoin'] = quote
-                else:
-                    logger.warning(f"无法从 {contract} 提取 margin coin，使用默认值 USDT")
-                    params['marginCoin'] = 'USDT'
+            params['marginCoin'] = extract_quote_currency(contract)
         
         # 某些交易所支持设置保证金杠杆
-        client.exchange.set_leverage(int(leverage), symbol, params=params)
+        client.exchange.set_leverage(int(leverage), contract, params=params)
         logger.info(f"设置现货杠杆成功: {contract} -> {leverage}x")
         return True
         

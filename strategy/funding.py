@@ -142,8 +142,9 @@ def open_order(name: str, size: float):
         logger.warning(f"{name} 已经有持仓")
         return
 
-    name_list = name.split("_")
-    set_cex_unified_leverage(name_list[0], lever)
+    # 从 CCXT 格式中提取 base currency（如 BTC/USDT:USDT -> BTC）
+    base_currency = name.split("/")[0].split(":")[0] if "/" in name else name
+    set_cex_unified_leverage(base_currency, lever)
     set_cex_leverage(name, lever)
     
     # 获取现货价格以计算买入金额
@@ -246,6 +247,7 @@ def watch_position():
 
 def run_funding():
     # """资金费率套利策略主函数"""
+
     try:
         logger.info("正在初始化策略...")
         set_cex_dual_mode(False)
@@ -263,5 +265,6 @@ def run_funding():
         logger.info("程序被用户中断")
     except Exception as e:
         logger.error(f"程序运行出现异常: {e}")
-    # cex_spot_place("ETH_USDT", "buy", str(balance), str(0.5))
+
+    # cex_spot_place("ETH/USDT", "buy", str(balance), str(0.5))
 

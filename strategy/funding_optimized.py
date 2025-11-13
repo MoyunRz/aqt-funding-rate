@@ -578,7 +578,8 @@ def execute_arbitrage_strategy():
     )
     
     # ========== 第6步：设置杠杆 ==========
-    coin_symbol = best_contract.name.split("_")[0]
+    # 从 CCXT 格式中提取 base currency（如 BTC/USDT:USDT -> BTC）
+    coin_symbol = best_contract.name.split("/")[0].split(":")[0] if "/" in best_contract.name else best_contract.name
     rest.set_cex_margin_leverage(best_contract.name, config.leverage)
     rest.set_cex_leverage(best_contract.name, config.leverage)
     
@@ -642,7 +643,8 @@ def execute_hedge_order(
         return
     
     # ========== 第2步：设置杠杆 ==========
-    coin_symbol = contract_name.split("_")[0]
+    # 从 CCXT 格式中提取 base currency（如 BTC/USDT:USDT -> BTC）
+    coin_symbol = contract_name.split("/")[0].split(":")[0] if "/" in contract_name else contract_name
     rest.set_cex_unified_leverage(coin_symbol, config.leverage)
     rest.set_cex_leverage(contract_name, config.leverage)
     
@@ -661,8 +663,8 @@ def _execute_long_hedge(contract_name: str, spot_amount: float, contract_size: i
     
     Args:
         contract_name: 合约名称
-        spot_amount: 现货金额
-        contract_size: 合约张数
+        spot_amount: 现货金额（USDT）
+        contract_size: 合约张数（用于日志）
     """
     logger.info(
         f"🔵 开始执行做多对冲",
@@ -671,8 +673,8 @@ def _execute_long_hedge(contract_name: str, spot_amount: float, contract_size: i
         spot_amount=f"{spot_amount:.2f}"
     )
     
-    # 第1步：开合约多单
-    futures_order = rest.cex_futures_place(contract_name, "0", contract_size)
+    # 第1步：开合约多单（使用现货金额作为 USDT 成本）
+    futures_order = rest.cex_futures_place(contract_name, float(spot_amount))
     if not futures_order:
         logger.error(f"❌ 合约多单失败", contract=contract_name)
         return
@@ -698,8 +700,8 @@ def _execute_short_hedge(contract_name: str, spot_amount: float, contract_size: 
     
     Args:
         contract_name: 合约名称
-        spot_amount: 现货金额
-        contract_size: 合约张数（负数）
+        spot_amount: 现货金额（USDT）
+        contract_size: 合约张数（用于日志，负数表示做空）
     """
     logger.info(
         f"🔴 开始执行做空对冲",
@@ -708,8 +710,8 @@ def _execute_short_hedge(contract_name: str, spot_amount: float, contract_size: 
         spot_amount=f"{spot_amount:.2f}"
     )
     
-    # 第1步：开合约空单
-    futures_order = rest.cex_futures_place(contract_name, "0", contract_size)
+    # 第1步：开合约空单（使用负的现货金额作为 USDT 成本，负数表示做空）
+    futures_order = rest.cex_futures_place(contract_name, -float(spot_amount))
     if not futures_order:
         logger.error(f"❌ 合约空单失败", contract=contract_name)
         return
