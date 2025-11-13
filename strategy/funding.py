@@ -94,7 +94,7 @@ def watch_history_funding():
         return
     current_timestamp = int(time.time())
     time_in_interval = current_timestamp % item.funding_interval
-    if True:
+    if time_in_interval >= item.funding_interval-10:
         fticker = get_cex_fticker(item.name)
         if fticker is None or len(fticker) == 0:
             logger.warning(f"无法获取 {item.name} 的合约行情数据")
@@ -246,22 +246,22 @@ def watch_position():
 
 def run_funding():
     # """资金费率套利策略主函数"""
-    # try:
-    #     logger.info("正在初始化策略...")
-    #     set_cex_dual_mode(False)
-    #     logger.info("持仓模式设置完成")
-    #
-    #     logger.info("=" * 60)
-    #     logger.info("资金费率套利策略启动，开始监控市场...")
-    #     logger.info("=" * 60)
-    #     while True:
-    #         watch_history_funding()
-    #         watch_position()
-    #         time.sleep(1)
-    #
-    # except KeyboardInterrupt:
-    #     logger.info("程序被用户中断")
-    # except Exception as e:
-    #     logger.error(f"程序运行出现异常: {e}")
-    cex_spot_place("ETH_USDT", "buy", str(balance), str(0.5))
+    try:
+        logger.info("正在初始化策略...")
+        set_cex_dual_mode(False)
+        logger.info("持仓模式设置完成")
+
+        logger.info("=" * 60)
+        logger.info("资金费率套利策略启动，开始监控市场...")
+        logger.info("=" * 60)
+        while True:
+            watch_history_funding()
+            watch_position()
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        logger.info("程序被用户中断")
+    except Exception as e:
+        logger.error(f"程序运行出现异常: {e}")
+    # cex_spot_place("ETH_USDT", "buy", str(balance), str(0.5))
 
