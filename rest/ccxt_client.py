@@ -26,6 +26,7 @@ CCXT 交易所 API 封装模块
 import os
 import ccxt
 import logging
+import time
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime
@@ -200,6 +201,10 @@ class CCXTClient:
             'secret': self.api_secret,
             'enableRateLimit': True,  # 启用速率限制
             'timeout': 30000,  # 30秒超时
+            'options': {
+                # 对于 Bitget，可以禁用自动获取币种列表（如果不需要的话）
+                # 但这可能会影响某些功能，所以默认不禁用
+            }
         }
         
         # Bitget 和 OKX 需要 password/passphrase
@@ -209,16 +214,16 @@ class CCXTClient:
             else:
                 logger.warning(f"{exchange_id.upper()} 需要 API_PASSWORD 或 PASSPHRASE 参数，某些功能可能无法使用")
         
-        # 交易所特定的配置
+        # 交易所特定的配置（合并到现有 options）
         if exchange_id in ['gate', 'bitget', 'okx', 'bybit']:
-            exchange_options['options'] = {
+            exchange_options['options'].update({
                 'defaultType': 'swap',  # 默认使用永续合约
                 'defaultSettle': 'usdt',  # 默认USDT结算
-            }
+            })
         elif exchange_id == 'binance':
-            exchange_options['options'] = {
+            exchange_options['options'].update({
                 'defaultType': 'future',  # Binance 使用 future
-            }
+            })
         
         self.exchange = exchange_class(exchange_options)
 
@@ -247,13 +252,65 @@ class CCXTClient:
         # else:
         #     logger.info(f"CCXT 客户端初始化完成 - 交易所: {exchange_id}, 测试网: {self.use_testnet} (未配置 API 密钥)")
     
-    def load_markets(self):
-        """加载市场数据"""
-        try:
-            return self.exchange.load_markets()
-        except Exception as e:
-            logger.error(f"加载市场数据失败: {e}")
-            return None
+    def load_markets(self, retries: int = 3, retry_delay: float = 2.0):
+        """
+        加载市场数据（带重试机制）
+        
+        Args:
+            retries: 重试次数，默认3次
+            retry_delay: 重试延迟（秒），默认2秒
+        
+        Returns:
+            市场数据字典，失败返回 None
+        """
+        last_error = None
+        for attempt in range(retries):
+            try:
+                markets = self.exchange.load_markets()
+                if attempt > 0:
+                    logger.info(f"加载市场数据成功（第 {attempt + 1} 次尝试）")
+                return markets
+            except (ccxt.NetworkError, ccxt.ExchangeError) as e:
+                last_error = e
+                error_msg = str(e)
+                
+                # 判断是否是网络/SSL错误
+                is_network_error = any(keyword in error_msg.lower() for keyword in [
+                    'ssl', 'connection', 'timeout', 'network', 'eof', 'retry'
+                ])
+                
+                if attempt < retries - 1:
+                    if is_network_error:
+                        logger.warning(
+                            f"加载市场数据失败（网络错误，第 {attempt + 1}/{retries} 次尝试）: "
+                            f"{type(e).__name__} - {error_msg[:100]}"
+                        )
+                    else:
+                        logger.warning(
+                            f"加载市场数据失败（第 {attempt + 1}/{retries} 次尝试）: "
+                            f"{type(e).__name__} - {error_msg[:100]}"
+                        )
+                    time.sleep(retry_delay * (attempt + 1))  # 指数退避
+                else:
+                    # 最后一次尝试失败
+                    if is_network_error:
+                        logger.error(
+                            f"加载市场数据失败（网络连接错误，已重试 {retries} 次）: "
+                            f"{type(e).__name__}\n"
+                            f"错误详情: {error_msg[:200]}\n"
+                            f"提示: 请检查网络连接、防火墙设置或代理配置"
+                        )
+                    else:
+                        logger.error(
+                            f"加载市场数据失败（已重试 {retries} 次）: "
+                            f"{type(e).__name__} - {error_msg[:200]}"
+                        )
+            except Exception as e:
+                # 其他类型的错误，不重试
+                logger.error(f"加载市场数据失败（未知错误）: {type(e).__name__} - {str(e)[:200]}")
+                return None
+        
+        return None
 
 
 _ccxt_client: Optional[CCXTClient] = None
@@ -345,9 +402,14 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
     try:
         client = get_ccxt_client()
         
-        # 加载市场数据（带进度提示）
+        # 加载市场数据（带进度提示和重试机制）
         logger.info("正在加载市场数据，这可能需要一些时间...")
-        markets = client.exchange.load_markets()
+        markets = client.load_markets(retries=3, retry_delay=2.0)
+        
+        if markets is None:
+            logger.error("无法加载市场数据，请检查网络连接")
+            return None
+        
         logger.info(f"已加载 {len(markets)} 个市场")
         
         contracts = []
@@ -401,7 +463,20 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
         return contracts if contracts else None
         
     except Exception as e:
-        logger.error(f"获取合约列表失败: {e}", exc_info=True)
+        error_msg = str(e)
+        # 检查是否是网络错误
+        is_network_error = any(keyword in error_msg.lower() for keyword in [
+            'ssl', 'connection', 'timeout', 'network', 'eof', 'retry', 'bitget get'
+        ])
+        
+        if is_network_error:
+            logger.error(
+                f"获取合约列表失败（网络连接错误）: {type(e).__name__}\n"
+                f"提示: 这通常是网络连接问题，不是 API 调用错误\n"
+                f"请检查: 1) 网络连接 2) 防火墙设置 3) 代理配置 4) SSL 证书"
+            )
+        else:
+            logger.error(f"获取合约列表失败: {type(e).__name__} - {error_msg[:200]}")
         return None
 
 
@@ -694,7 +769,20 @@ def get_cex_all_position() -> Optional[List[Position]]:
         return result if result else None
         
     except Exception as e:
-        logger.error(f"获取所有持仓失败: {e}")
+        error_msg = str(e)
+        # 检查是否是网络错误
+        is_network_error = any(keyword in error_msg.lower() for keyword in [
+            'ssl', 'connection', 'timeout', 'network', 'eof', 'retry', 'bitget get'
+        ])
+        
+        if is_network_error:
+            logger.error(
+                f"获取所有持仓失败（网络连接错误）: {type(e).__name__}\n"
+                f"提示: 这通常是网络连接问题，不是 API 调用错误\n"
+                f"请检查: 1) 网络连接 2) 防火墙设置 3) 代理配置 4) SSL 证书"
+            )
+        else:
+            logger.error(f"获取所有持仓失败: {type(e).__name__} - {error_msg[:200]}")
         return None
 
 
