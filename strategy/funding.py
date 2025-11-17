@@ -39,7 +39,7 @@ balance = 200
 lever = "3"
 
 mp = {}
-
+notSpot = {}
 def watch_filter_funding():
     """筛选高资金费率的合约，返回最优套利机会"""
     logger.info("正在获取合约列表...")
@@ -53,14 +53,18 @@ def watch_filter_funding():
     flist = []
     
     for v in contracts:
-
         funding_rate = float(v.funding_rate) * 100.0
-        
-        if funding_rate >= 0.1 or funding_rate <= -0.1:
+        if funding_rate  >= 0.065:
+            if notSpot.get(v.name) is not None and notSpot.get(v.name) > 3:
+                continue
             candle = mp.get(v.name)
             if candle is None:
                 sticker = get_cex_spot_candle(v.name, "1m", 1)
                 if sticker is None or len(sticker) == 0:
+                    if notSpot.get(v.name) is None:
+                        notSpot[v.name] = 1
+                    else:
+                        notSpot[v.name] += 1
                     continue
                 mp[v.name] = v
                 flist.append(v)
@@ -92,9 +96,11 @@ def watch_history_funding():
     item = watch_filter_funding()
     if item is None:
         return
+    # interval = item.funding_interval
+    interval = 60
     current_timestamp = int(time.time())
-    time_in_interval = current_timestamp % item.funding_interval
-    if time_in_interval >= item.funding_interval-10:
+    time_in_interval = current_timestamp % interval
+    if time_in_interval >= interval-10:
         fticker = get_cex_fticker(item.name)
         if fticker is None or len(fticker) == 0:
             logger.warning(f"无法获取 {item.name} 的合约行情数据")
@@ -247,7 +253,6 @@ def watch_position():
 
 def run_funding():
     # """资金费率套利策略主函数"""
-
     try:
         logger.info("正在初始化策略...")
         set_cex_dual_mode(False)
@@ -259,7 +264,7 @@ def run_funding():
         while True:
             watch_history_funding()
             watch_position()
-            time.sleep(1)
+            time.sleep(3)
 
     except KeyboardInterrupt:
         logger.info("程序被用户中断")

@@ -434,8 +434,25 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
             try:
                 funding_rate_info = client.exchange.fetch_funding_rate(symbol)
                 funding_rate = funding_rate_info.get('fundingRate', 0)
-                
+                interval = funding_rate_info.get('interval', "8h")
                 funding_interval = 8 * 3600
+
+                # 匹配算法
+                if interval == "8h":
+                    funding_interval = 8 * 3600
+                elif interval == "1h":
+                    funding_interval = 3600
+                elif interval == "4h":
+                    funding_interval = 4 * 3600
+                elif interval == "2h":
+                    funding_interval = 2 * 3600
+                elif interval == "12h":
+                    funding_interval = 12 * 3600
+                elif interval == "6h":
+                    funding_interval = 6 * 3600
+                elif interval == "1d":
+                    funding_interval = 24 * 3600
+
                 contract_size = market.get('contractSize', 1)
                 quanto_multiplier = 1.0 / contract_size if contract_size > 0 else 1.0
                 
@@ -877,7 +894,7 @@ def get_cex_spot_candle(contract: str, interval: str = "1m", limit: int = 100) -
         ohlcv = client.exchange.fetch_ohlcv(contract, timeframe=interval, limit=limit)
         return ohlcv if ohlcv else None
     except Exception as e:
-        logger.error(f"获取K线数据失败 {contract}: {e}")
+        logger.error(f"获取现货 K线数据失败 {contract}: {e}")
         return None
 
 
