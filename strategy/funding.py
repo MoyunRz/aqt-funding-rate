@@ -96,8 +96,8 @@ def watch_history_funding():
     item = watch_filter_funding()
     if item is None:
         return
-    # interval = item.funding_interval
-    interval = 60
+    interval = item.funding_interval
+
     current_timestamp = int(time.time())
     time_in_interval = current_timestamp % interval
     if time_in_interval >= interval-10:
