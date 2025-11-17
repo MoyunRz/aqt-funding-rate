@@ -40,15 +40,17 @@ lever = "3"
 
 mp = {}
 notSpot = {}
+contracts = Optional[List[Contract]]
 def watch_filter_funding():
     """筛选高资金费率的合约，返回最优套利机会"""
     logger.info("正在获取合约列表...")
-    contracts = get_cex_contracts()
+
+    global  contracts
     if contracts is None or len(contracts) == 0:
-        logger.warning("无法获取合约列表")
+        contracts = get_cex_contracts()
         return
+
     logger.info(f"获取到 {len(contracts)} 个合约")
-    
     global mp
     flist = []
     

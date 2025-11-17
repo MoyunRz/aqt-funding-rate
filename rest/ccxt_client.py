@@ -436,7 +436,6 @@ def get_cex_contracts(contract: str = "") -> Optional[List[Contract]]:
                 funding_rate = funding_rate_info.get('fundingRate', 0)
                 interval = funding_rate_info.get('interval', "8h")
                 funding_interval = 8 * 3600
-
                 # 匹配算法
                 if interval == "8h":
                     funding_interval = 8 * 3600
